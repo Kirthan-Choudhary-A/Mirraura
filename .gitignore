@@ -2,8 +2,10 @@ __pycache__/
 *.pyc
 .venv/
 backend/backend
+backend/backend.exe
 node_modules/
 dist/
 .env
 *.trace
 samples/eicar.txt
+verdict-engine/tests/test_audit_log.jsonl
