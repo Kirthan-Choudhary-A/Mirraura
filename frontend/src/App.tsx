@@ -1,17 +1,42 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { connectLive } from "./api";
+import { AuditLogTable } from "./components/AuditLogTable";
+import { EventFeed } from "./components/EventFeed";
 import { UploadPanel } from "./components/UploadPanel";
-import type { Verdict } from "./types";
+import { VerdictPanel } from "./components/VerdictPanel";
+import type { MirraEvent, Verdict } from "./types";
 
 function App() {
-  const [lastVerdict, setLastVerdict] = useState<Verdict | null>(null);
+  const [events, setEvents] = useState<MirraEvent[]>([]);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const ws = connectLive((msg) => {
+      if (msg.type === "event") setEvents((prev) => [...prev, msg.data]);
+      if (msg.type === "verdict") setVerdict(msg.data);
+    });
+    return () => ws.close();
+  }, []);
+
+  function handleUpload(v: Verdict) {
+    setVerdict(v);
+    setRefreshKey((k) => k + 1);
+  }
+
+  function handleNewRun() {
+    setEvents([]);
+  }
 
   return (
     <div>
       <h1>Mirraura</h1>
-      <UploadPanel onVerdict={setLastVerdict} />
-      {lastVerdict && (
-        <pre>{JSON.stringify(lastVerdict, null, 2)}</pre>
-      )}
+      <div onClickCapture={handleNewRun}>
+        <UploadPanel onVerdict={handleUpload} />
+      </div>
+      <EventFeed events={events} />
+      <VerdictPanel verdict={verdict} />
+      <AuditLogTable refreshKey={refreshKey} />
     </div>
   );
 }
