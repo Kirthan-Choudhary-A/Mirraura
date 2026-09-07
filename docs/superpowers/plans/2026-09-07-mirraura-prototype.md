@@ -1,0 +1,2414 @@
+# Mirraura Prototype Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build the 10-day working prototype — upload a file → shadow container detonates it → sensor captures behavior → verdict engine scores it (hash + rule-based) with confidence and causal chain → hash-chained audit log → live dashboard.
+
+**Architecture:** Go backend orchestrates Docker (shadow network + shadow container lifecycle) and proxies to a Python FastAPI verdict engine (scoring + audit log) and a Python sensor (runs `strace` inside the shadow container, parses syscalls into canonical events). React/TypeScript frontend shows the live event feed, verdict, and audit log. Everything ships as a `docker-compose.yml` so any teammate with Docker can run it with one command.
+
+**Tech Stack:** Go (stdlib `net/http` + `github.com/docker/docker` client + `github.com/gorilla/websocket`), Python 3.12 (FastAPI + Pydantic + pytest, stdlib `subprocess`/`re`/`hashlib`/`json` for the sensor and audit log), TypeScript + React + Vite, Docker Compose.
+
+**Spec:** `docs/superpowers/specs/2026-09-07-mirraura-prototype-design.md`
+
+## Global Constraints
+
+- Languages: Go = backend orchestrator only. Python = verdict engine + sensor. TypeScript/React = frontend. (Spec §12)
+- Canonical event schema fields: `event_id, device_id, event_type, process_ref{pid,name,parent_pid}, network_ref{dst_ip,dst_port,protocol}, file_ref{path,action}, timestamp, baseline_deviation_score`. (Spec §5)
+- Verdict schema fields: `verdict_id, sample_hash, verdict, confidence, causal_chain, timestamp, prev_log_hash`. (Spec §6)
+- Verdict banding: no telemetry → `Inconclusive` (0.0); telemetry but no rule fired → `Normal` (0.0); `0.0 < confidence < 0.6` → `Suspicious`; `confidence >= 0.6` → `Compromised`. (Spec §6, corrected)
+- Rule weights: child process spawn +0.3, write to sensitive path (`/etc/`, `/bin/`, `/usr/`, `/boot/`, `/sbin/`) +0.25, connection to a port outside `{80, 443}` +0.2, more than 5 file writes/deletes +0.25. Confidence capped at 1.0. (Spec §6)
+- Known-bad hash set: JSON file, SHA-256 keyed. EICAR test file hash `275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0` is the one entry for the prototype. Hash hit → `Compromised`, confidence 1.0. (Spec §6, §11)
+- Audit log: append-only JSON-lines, each entry's `entry_hash = SHA256(json.dumps(entry_with_prev_log_hash, sort_keys=True))`, `prev_log_hash` of entry N = `entry_hash` of entry N-1, genesis = `"0"*64`. (Spec §7)
+- Portability: `docker compose up --build` from repo root is the only setup step; config via `.env` (checked-in `.env.example`); no hardcoded absolute/machine-specific paths. (Spec §13)
+- Demo sample set and expected verdicts: EICAR → `Compromised` (hash hit); harmless script → `Normal`; script spawning a process + writing to `/etc/` → `Suspicious` (0.55); script connecting to a non-standard port only → `Suspicious` (0.2). (Spec §11)
+
+---
+
+## File Structure
+
+```
+Mirraura/
+  docker-compose.yml
+  .env.example
+  .gitignore
+  backend/                  (Go — orchestrator + API)
+    go.mod
+    main.go
+    types.go
+    dockermanager.go
+    samples.go
+    hub.go
+    verdicts.go
+    Dockerfile
+  verdict-engine/           (Python — FastAPI scoring service)
+    requirements.txt
+    schemas.py
+    hash_lookup.py
+    known_bad_hashes.json
+    rule_scorer.py
+    audit_log.py
+    app.py
+    Dockerfile
+    tests/
+      test_hash_lookup.py
+      test_rule_scorer.py
+      test_audit_log.py
+      test_app.py
+  sensor/                   (Python — runs inside the shadow container)
+    tracer.py
+    parser.py
+    sensor.py
+    tests/
+      test_parser.py
+  shadow-image/
+    Dockerfile
+  samples/                  (safe synthetic demo samples)
+    eicar.txt
+    harmless.sh
+    spawn_and_write.sh
+    connect_odd_port.sh
+  frontend/                 (React + TypeScript, Vite)
+    package.json
+    vite.config.ts
+    index.html
+    Dockerfile
+    src/
+      main.tsx
+      App.tsx
+      types.ts
+      api.ts
+      api.test.ts
+      components/
+        UploadPanel.tsx
+        EventFeed.tsx
+        VerdictPanel.tsx
+        AuditLogTable.tsx
+```
+
+---
+
+### Task 1 (Day 1): Repo scaffold + Docker Compose skeleton with health checks
+
+**Files:**
+- Create: `.gitignore`
+- Create: `.env.example`
+- Create: `docker-compose.yml`
+- Create: `backend/go.mod`
+- Create: `backend/main.go`
+- Create: `backend/main_test.go`
+- Create: `backend/Dockerfile`
+- Create: `verdict-engine/requirements.txt`
+- Create: `verdict-engine/app.py`
+- Create: `verdict-engine/tests/test_app.py`
+- Create: `verdict-engine/Dockerfile`
+
+**Interfaces:**
+- Produces: `GET /api/health` on the Go backend (`{"status":"ok"}`); `GET /health` on the verdict engine (`{"status":"ok"}`). Later tasks add routes to these same `main.go` / `app.py` files.
+
+- [ ] **Step 1: Write the failing Go test**
+
+```go
+// backend/main_test.go
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestHealthHandler(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	rec := httptest.NewRecorder()
+	healthHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"ok"`) {
+		t.Fatalf("unexpected body: %s", rec.Body.String())
+	}
+}
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd backend && go mod init mirraura/backend && go test ./...`
+Expected: FAIL (`healthHandler` undefined, package doesn't compile).
+
+- [ ] **Step 3: Implement the minimal backend**
+
+```go
+// backend/main.go
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+)
+
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", healthHandler)
+
+	port := os.Getenv("BACKEND_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Printf("backend listening on :%s", port)
+	if err := http.ListenAndServe(":"+port, withCORS(mux)); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+```
+
+- [ ] **Step 4: Run Go test to verify it passes**
+
+Run: `cd backend && go test ./... -v`
+Expected: PASS
+
+- [ ] **Step 5: Write the failing Python test**
+
+```python
+# verdict-engine/tests/test_app.py
+from fastapi.testclient import TestClient
+from app import app
+
+client = TestClient(app)
+
+
+def test_health():
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+```
+
+- [ ] **Step 6: Run it to verify it fails**
+
+Run: `cd verdict-engine && pip install -r requirements.txt && pytest tests/test_app.py -v`
+Expected: FAIL (`app.py` doesn't exist / import error)
+
+- [ ] **Step 7: Implement the minimal verdict-engine service**
+
+```
+# verdict-engine/requirements.txt
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+httpx==0.27.2
+pytest==8.3.3
+```
+
+```python
+# verdict-engine/app.py
+from fastapi import FastAPI
+
+app = FastAPI()
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+- [ ] **Step 8: Run Python test to verify it passes**
+
+Run: `cd verdict-engine && pytest tests/test_app.py -v`
+Expected: PASS
+
+- [ ] **Step 9: Add Dockerfiles, compose file, env, gitignore**
+
+```dockerfile
+# backend/Dockerfile
+FROM golang:1.22-alpine AS build
+WORKDIR /app
+COPY go.mod ./
+RUN go mod download
+COPY . .
+RUN go build -o backend .
+
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=build /app/backend .
+EXPOSE 8080
+CMD ["./backend"]
+```
+
+```dockerfile
+# verdict-engine/Dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```yaml
+# docker-compose.yml
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    environment:
+      - BACKEND_PORT=8080
+      - VERDICT_ENGINE_URL=http://verdict-engine:8000
+    depends_on:
+      - verdict-engine
+
+  verdict-engine:
+    build: ./verdict-engine
+    ports:
+      - "${VERDICT_ENGINE_PORT:-8000}:8000"
+    volumes:
+      - audit-log-data:/data
+
+volumes:
+  audit-log-data:
+```
+
+```
+# .env.example
+BACKEND_PORT=8080
+VERDICT_ENGINE_PORT=8000
+FRONTEND_PORT=5173
+```
+
+```
+# .gitignore
+__pycache__/
+*.pyc
+.venv/
+backend/backend
+node_modules/
+dist/
+.env
+*.trace
+```
+
+- [ ] **Step 10: Verify compose brings both services up healthy**
+
+Run: `cp .env.example .env && docker compose up --build -d && sleep 5 && curl -sf http://localhost:8080/api/health && curl -sf http://localhost:8000/health && docker compose down`
+Expected: both curls print `{"status":"ok"}` (or equivalent JSON), no errors.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add .gitignore .env.example docker-compose.yml backend verdict-engine
+git commit -m "feat: scaffold backend + verdict-engine with health checks and compose"
+```
+
+---
+
+### Task 2 (Day 1): Canonical event/verdict schemas + hash lookup
+
+**Files:**
+- Create: `verdict-engine/schemas.py`
+- Create: `verdict-engine/hash_lookup.py`
+- Create: `verdict-engine/known_bad_hashes.json`
+- Create: `verdict-engine/tests/test_hash_lookup.py`
+
+**Interfaces:**
+- Produces: `Event`, `ProcessRef`, `NetworkRef`, `FileRef`, `Verdict` Pydantic models in `schemas.py` (used by every later Python task). `check_hash(sample_hash: str, known_bad: dict[str, str] | None = None) -> str | None` and `load_known_bad() -> dict[str, str]` in `hash_lookup.py`.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# verdict-engine/tests/test_hash_lookup.py
+from hash_lookup import check_hash
+
+EICAR_HASH = "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0"
+
+
+def test_known_bad_hash_returns_label():
+    assert check_hash(EICAR_HASH) == "EICAR-Test-File"
+
+
+def test_unknown_hash_returns_none():
+    assert check_hash("0" * 64) is None
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd verdict-engine && pytest tests/test_hash_lookup.py -v`
+Expected: FAIL (`hash_lookup` module not found)
+
+- [ ] **Step 3: Implement schemas and hash lookup**
+
+```python
+# verdict-engine/schemas.py
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel
+
+
+class ProcessRef(BaseModel):
+    pid: int
+    name: str
+    parent_pid: int = 0
+
+
+class NetworkRef(BaseModel):
+    dst_ip: str
+    dst_port: int
+    protocol: str = "tcp"
+
+
+class FileRef(BaseModel):
+    path: str
+    action: Literal["write", "delete", "create"]
+
+
+class Event(BaseModel):
+    event_id: str
+    device_id: str
+    event_type: Literal[
+        "process_spawn", "file_write", "file_delete", "network_connect"
+    ]
+    process_ref: Optional[ProcessRef] = None
+    network_ref: Optional[NetworkRef] = None
+    file_ref: Optional[FileRef] = None
+    timestamp: str
+    baseline_deviation_score: float = 0.0
+
+
+class Verdict(BaseModel):
+    verdict_id: str
+    sample_hash: str
+    verdict: Literal["Normal", "Suspicious", "Compromised", "Inconclusive"]
+    confidence: float
+    causal_chain: List[str]
+    timestamp: str
+    prev_log_hash: str
+```
+
+```json
+[
+  {"hash": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0", "label": "EICAR-Test-File"}
+]
+```
+Save as `verdict-engine/known_bad_hashes.json`.
+
+```python
+# verdict-engine/hash_lookup.py
+import json
+from pathlib import Path
+from typing import Dict, Optional
+
+KNOWN_BAD_PATH = Path(__file__).parent / "known_bad_hashes.json"
+
+
+def load_known_bad() -> Dict[str, str]:
+    with open(KNOWN_BAD_PATH) as f:
+        return {entry["hash"]: entry["label"] for entry in json.load(f)}
+
+
+def check_hash(sample_hash: str, known_bad: Optional[Dict[str, str]] = None) -> Optional[str]:
+    known_bad = known_bad if known_bad is not None else load_known_bad()
+    return known_bad.get(sample_hash)
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd verdict-engine && pytest tests/test_hash_lookup.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add verdict-engine/schemas.py verdict-engine/hash_lookup.py verdict-engine/known_bad_hashes.json verdict-engine/tests/test_hash_lookup.py
+git commit -m "feat: add canonical event/verdict schemas and known-bad hash lookup"
+```
+
+---
+
+### Task 3 (Day 2): Rule-based behavioral scorer
+
+**Files:**
+- Create: `verdict-engine/rule_scorer.py`
+- Create: `verdict-engine/tests/test_rule_scorer.py`
+
+**Interfaces:**
+- Consumes: `Event`, `ProcessRef`, `NetworkRef`, `FileRef` from `schemas.py` (Task 2).
+- Produces: `score_events(events: list[Event]) -> tuple[float, list[str]]` and `verdict_from_score(confidence: float, chain: list[str], had_telemetry: bool) -> str` — used by `app.py` in Task 5.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# verdict-engine/tests/test_rule_scorer.py
+from schemas import Event, FileRef, NetworkRef, ProcessRef
+from rule_scorer import score_events, verdict_from_score
+
+
+def make_event(event_type, **refs) -> Event:
+    return Event(
+        event_id="e1",
+        device_id="shadow-node",
+        event_type=event_type,
+        timestamp="2026-09-07T00:00:00Z",
+        **refs,
+    )
+
+
+def test_no_events_no_rules_fire():
+    confidence, chain = score_events([])
+    assert confidence == 0.0
+    assert chain == []
+
+
+def test_child_process_and_sensitive_write():
+    events = [
+        make_event("process_spawn", process_ref=ProcessRef(pid=1, name="touch")),
+        make_event(
+            "file_write",
+            file_ref=FileRef(path="/etc/mirraura-test-marker", action="write"),
+        ),
+    ]
+    confidence, chain = score_events(events)
+    assert confidence == 0.55
+    assert len(chain) == 2
+
+
+def test_odd_port_only():
+    events = [
+        make_event(
+            "network_connect",
+            network_ref=NetworkRef(dst_ip="127.0.0.1", dst_port=31337),
+        )
+    ]
+    confidence, chain = score_events(events)
+    assert confidence == 0.2
+    assert len(chain) == 1
+
+
+def test_verdict_banding():
+    assert verdict_from_score(0.0, [], had_telemetry=False) == "Inconclusive"
+    assert verdict_from_score(0.0, [], had_telemetry=True) == "Normal"
+    assert verdict_from_score(0.2, ["x"], had_telemetry=True) == "Suspicious"
+    assert verdict_from_score(0.55, ["x", "y"], had_telemetry=True) == "Suspicious"
+    assert verdict_from_score(0.6, ["x"], had_telemetry=True) == "Compromised"
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd verdict-engine && pytest tests/test_rule_scorer.py -v`
+Expected: FAIL (`rule_scorer` module not found)
+
+- [ ] **Step 3: Implement the scorer**
+
+```python
+# verdict-engine/rule_scorer.py
+from typing import List, Tuple
+
+from schemas import Event
+
+RULE_WEIGHTS = {
+    "child_process": 0.3,
+    "sensitive_write": 0.25,
+    "odd_port": 0.2,
+    "rapid_file_changes": 0.25,
+}
+SENSITIVE_PREFIXES = ("/etc/", "/bin/", "/usr/", "/boot/", "/sbin/")
+STANDARD_PORTS = {80, 443}
+RAPID_FILE_CHANGE_THRESHOLD = 5
+
+
+def score_events(events: List[Event]) -> Tuple[float, List[str]]:
+    confidence = 0.0
+    chain: List[str] = []
+
+    spawns = [e for e in events if e.event_type == "process_spawn" and e.process_ref]
+    if spawns:
+        confidence += RULE_WEIGHTS["child_process"]
+        p = spawns[0].process_ref
+        chain.append(f"spawned child process '{p.name}' (pid {p.pid})")
+
+    sensitive = [
+        e
+        for e in events
+        if e.event_type == "file_write"
+        and e.file_ref
+        and e.file_ref.path.startswith(SENSITIVE_PREFIXES)
+    ]
+    if sensitive:
+        confidence += RULE_WEIGHTS["sensitive_write"]
+        chain.append(f"wrote to sensitive path '{sensitive[0].file_ref.path}'")
+
+    odd_conns = [
+        e
+        for e in events
+        if e.event_type == "network_connect"
+        and e.network_ref
+        and e.network_ref.dst_port not in STANDARD_PORTS
+    ]
+    if odd_conns:
+        confidence += RULE_WEIGHTS["odd_port"]
+        n = odd_conns[0].network_ref
+        chain.append(f"connected to non-standard port {n.dst_port} ({n.dst_ip})")
+
+    file_changes = [e for e in events if e.event_type in ("file_write", "file_delete")]
+    if len(file_changes) > RAPID_FILE_CHANGE_THRESHOLD:
+        confidence += RULE_WEIGHTS["rapid_file_changes"]
+        chain.append(f"modified {len(file_changes)} files rapidly")
+
+    return min(confidence, 1.0), chain
+
+
+def verdict_from_score(confidence: float, chain: List[str], had_telemetry: bool) -> str:
+    if not had_telemetry:
+        return "Inconclusive"
+    if confidence == 0.0:
+        return "Normal"
+    if confidence < 0.6:
+        return "Suspicious"
+    return "Compromised"
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd verdict-engine && pytest tests/test_rule_scorer.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add verdict-engine/rule_scorer.py verdict-engine/tests/test_rule_scorer.py
+git commit -m "feat: add weighted rule-based behavioral scorer"
+```
+
+---
+
+### Task 4 (Day 2): Hash-chained audit log
+
+**Files:**
+- Create: `verdict-engine/audit_log.py`
+- Create: `verdict-engine/tests/test_audit_log.py`
+
+**Interfaces:**
+- Produces: `AuditLog(path: Path)` class with `.append(verdict: dict) -> dict`, `.all() -> list[dict]`, `.get(verdict_id: str) -> dict | None`, `.verify_chain() -> bool` — used by `app.py` in Task 5.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# verdict-engine/tests/test_audit_log.py
+import json
+
+from audit_log import AuditLog
+
+
+def test_append_and_read_back(tmp_path):
+    log = AuditLog(tmp_path / "audit_log.jsonl")
+    record = log.append({"verdict_id": "v1", "verdict": "Normal"})
+    assert record["prev_log_hash"] == "0" * 64
+    assert "entry_hash" in record
+    assert log.get("v1")["verdict_id"] == "v1"
+
+
+def test_chain_links_entries(tmp_path):
+    log = AuditLog(tmp_path / "audit_log.jsonl")
+    r1 = log.append({"verdict_id": "v1", "verdict": "Normal"})
+    r2 = log.append({"verdict_id": "v2", "verdict": "Suspicious"})
+    assert r2["prev_log_hash"] == r1["entry_hash"]
+    assert log.verify_chain() is True
+
+
+def test_tampering_breaks_chain(tmp_path):
+    log_path = tmp_path / "audit_log.jsonl"
+    log = AuditLog(log_path)
+    log.append({"verdict_id": "v1", "verdict": "Normal"})
+    log.append({"verdict_id": "v2", "verdict": "Suspicious"})
+
+    lines = log_path.read_text().splitlines()
+    tampered = json.loads(lines[0])
+    tampered["verdict"] = "Compromised"
+    lines[0] = json.dumps(tampered)
+    log_path.write_text("\n".join(lines) + "\n")
+
+    assert AuditLog(log_path).verify_chain() is False
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd verdict-engine && pytest tests/test_audit_log.py -v`
+Expected: FAIL (`audit_log` module not found)
+
+- [ ] **Step 3: Implement the audit log**
+
+```python
+# verdict-engine/audit_log.py
+import hashlib
+import json
+from pathlib import Path
+from typing import List, Optional
+
+GENESIS_HASH = "0" * 64
+
+
+class AuditLog:
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.touch()
+
+    def _read_lines(self) -> List[str]:
+        with open(self.path) as f:
+            return [line for line in f.read().splitlines() if line.strip()]
+
+    def _last_hash(self) -> str:
+        lines = self._read_lines()
+        if not lines:
+            return GENESIS_HASH
+        return json.loads(lines[-1])["entry_hash"]
+
+    def append(self, verdict: dict) -> dict:
+        prev_hash = self._last_hash()
+        entry = {**verdict, "prev_log_hash": prev_hash}
+        entry_hash = hashlib.sha256(
+            json.dumps(entry, sort_keys=True).encode()
+        ).hexdigest()
+        record = {**entry, "entry_hash": entry_hash}
+        with open(self.path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+        return record
+
+    def all(self) -> List[dict]:
+        return [json.loads(line) for line in self._read_lines()]
+
+    def get(self, verdict_id: str) -> Optional[dict]:
+        for record in self.all():
+            if record.get("verdict_id") == verdict_id:
+                return record
+        return None
+
+    def verify_chain(self) -> bool:
+        prev_hash = GENESIS_HASH
+        for record in self.all():
+            record = dict(record)
+            stored_entry_hash = record.pop("entry_hash", None)
+            if record.get("prev_log_hash") != prev_hash:
+                return False
+            expected = hashlib.sha256(
+                json.dumps(record, sort_keys=True).encode()
+            ).hexdigest()
+            if expected != stored_entry_hash:
+                return False
+            prev_hash = stored_entry_hash
+        return True
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd verdict-engine && pytest tests/test_audit_log.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add verdict-engine/audit_log.py verdict-engine/tests/test_audit_log.py
+git commit -m "feat: add hash-chained append-only audit log"
+```
+
+---
+
+### Task 5 (Day 3): Verdict engine service (`/score`, `/verdicts`, `/verdicts/{id}`)
+
+**Files:**
+- Modify: `verdict-engine/app.py`
+- Modify: `verdict-engine/tests/test_app.py`
+
+**Interfaces:**
+- Consumes: `check_hash` (Task 2), `score_events`/`verdict_from_score` (Task 3), `AuditLog` (Task 4), `Event`/`Verdict` (Task 2).
+- Produces: `POST /score` (body `{sample_hash, events}` → `Verdict`), `GET /verdicts` (→ `list[Verdict-like dict]`), `GET /verdicts/{id}` (→ dict or 404). Consumed by the Go backend in Task 9.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# verdict-engine/tests/test_app.py
+from fastapi.testclient import TestClient
+
+from app import app
+
+client = TestClient(app)
+
+EICAR_HASH = "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0"
+
+
+def test_health():
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+def test_score_hash_hit_is_compromised():
+    resp = client.post("/score", json={"sample_hash": EICAR_HASH, "events": []})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["verdict"] == "Compromised"
+    assert body["confidence"] == 1.0
+    assert "EICAR-Test-File" in body["causal_chain"][0]
+
+
+def test_score_no_events_is_inconclusive():
+    resp = client.post("/score", json={"sample_hash": "f" * 64, "events": []})
+    body = resp.json()
+    assert body["verdict"] == "Inconclusive"
+
+
+def test_score_odd_port_is_suspicious():
+    events = [
+        {
+            "event_id": "e1",
+            "device_id": "shadow-node",
+            "event_type": "network_connect",
+            "network_ref": {"dst_ip": "127.0.0.1", "dst_port": 31337, "protocol": "tcp"},
+            "timestamp": "2026-09-07T00:00:00Z",
+            "baseline_deviation_score": 0.0,
+        }
+    ]
+    resp = client.post("/score", json={"sample_hash": "a" * 64, "events": events})
+    body = resp.json()
+    assert body["verdict"] == "Suspicious"
+    assert body["confidence"] == 0.2
+
+
+def test_verdict_list_and_get_roundtrip():
+    resp = client.post("/score", json={"sample_hash": "b" * 64, "events": []})
+    verdict_id = resp.json()["verdict_id"]
+
+    listed = client.get("/verdicts").json()
+    assert any(v["verdict_id"] == verdict_id for v in listed)
+
+    single = client.get(f"/verdicts/{verdict_id}")
+    assert single.status_code == 200
+    assert single.json()["verdict_id"] == verdict_id
+
+    missing = client.get("/verdicts/does-not-exist")
+    assert missing.status_code == 404
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd verdict-engine && pytest tests/test_app.py -v`
+Expected: FAIL (`/score` route doesn't exist yet)
+
+- [ ] **Step 3: Implement the service**
+
+```python
+# verdict-engine/app.py
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+from audit_log import AuditLog
+from hash_lookup import check_hash
+from rule_scorer import score_events, verdict_from_score
+from schemas import Event, Verdict
+
+app = FastAPI()
+audit_log = AuditLog(Path("/data/audit_log.jsonl"))
+
+
+class ScoreRequest(BaseModel):
+    sample_hash: str
+    events: List[Event]
+
+
+def _strip_entry_hash(record: dict) -> dict:
+    return {k: v for k, v in record.items() if k != "entry_hash"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/score", response_model=Verdict)
+def score(req: ScoreRequest):
+    known_bad_label = check_hash(req.sample_hash)
+    if known_bad_label:
+        verdict, confidence, chain = (
+            "Compromised",
+            1.0,
+            [f"sample hash matches known-bad entry '{known_bad_label}'"],
+        )
+    else:
+        confidence, chain = score_events(req.events)
+        verdict = verdict_from_score(confidence, chain, had_telemetry=len(req.events) > 0)
+
+    record = {
+        "verdict_id": str(uuid.uuid4()),
+        "sample_hash": req.sample_hash,
+        "verdict": verdict,
+        "confidence": confidence,
+        "causal_chain": chain,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    stored = audit_log.append(record)
+    return Verdict(**_strip_entry_hash(stored))
+
+
+@app.get("/verdicts")
+def list_verdicts():
+    return [_strip_entry_hash(r) for r in audit_log.all()]
+
+
+@app.get("/verdicts/{verdict_id}")
+def get_verdict(verdict_id: str):
+    record = audit_log.get(verdict_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="verdict not found")
+    return _strip_entry_hash(record)
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd verdict-engine && pytest tests/test_app.py -v`
+Expected: PASS (note: tests share the audit log file across the test session since `app.py` opens it once at import time — that's fine here, each test uses a unique `sample_hash` so ordering doesn't matter)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add verdict-engine/app.py verdict-engine/tests/test_app.py
+git commit -m "feat: wire verdict engine score/list/get endpoints"
+```
+
+---
+
+### Task 6 (Day 3): Sensor trace-log parser (pure function)
+
+**Files:**
+- Create: `sensor/parser.py`
+- Create: `sensor/tests/test_parser.py`
+
+**Interfaces:**
+- Produces: `parse_trace_log(log_text: str) -> list[dict]` — each dict has `event_type` plus one of `process_ref`/`file_ref`/`network_ref`. Consumed by `sensor.py` in Task 7.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# sensor/tests/test_parser.py
+from parser import parse_trace_log
+
+TRACE_SAMPLE = """
+12345 execve("/usr/bin/touch", ["touch", "/etc/mirraura-test-marker"], 0x7fff /* 20 vars */) = 0
+12345 openat(AT_FDCWD, "/etc/mirraura-test-marker", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+12346 connect(3, {sa_family=AF_INET, sin_port=htons(31337), sin_addr=inet_addr("127.0.0.1")}, 16) = -1 ECONNREFUSED
+12346 openat(AT_FDCWD, "/tmp/readme.txt", O_RDONLY) = 4
+"""
+
+
+def test_parses_process_spawn():
+    events = parse_trace_log(TRACE_SAMPLE)
+    spawns = [e for e in events if e["event_type"] == "process_spawn"]
+    assert len(spawns) == 1
+    assert spawns[0]["process_ref"]["name"] == "touch"
+    assert spawns[0]["process_ref"]["pid"] == 12345
+
+
+def test_parses_file_write_but_not_read_only():
+    events = parse_trace_log(TRACE_SAMPLE)
+    writes = [e for e in events if e["event_type"] == "file_write"]
+    assert len(writes) == 1
+    assert writes[0]["file_ref"]["path"] == "/etc/mirraura-test-marker"
+
+
+def test_parses_network_connect():
+    events = parse_trace_log(TRACE_SAMPLE)
+    conns = [e for e in events if e["event_type"] == "network_connect"]
+    assert len(conns) == 1
+    assert conns[0]["network_ref"]["dst_port"] == 31337
+    assert conns[0]["network_ref"]["dst_ip"] == "127.0.0.1"
+
+
+def test_empty_log_gives_no_events():
+    assert parse_trace_log("") == []
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `cd sensor && pytest tests/test_parser.py -v`
+Expected: FAIL (`parser` module not found)
+
+- [ ] **Step 3: Implement the parser**
+
+```python
+# sensor/parser.py
+import re
+from typing import Dict, List
+
+EXECVE_RE = re.compile(r'^(\d+)\s+execve\("([^"]+)"')
+OPENAT_RE = re.compile(r'^(\d+)\s+openat\([^,]+,\s*"([^"]+)",\s*([A-Z_|]+)')
+CONNECT_RE = re.compile(
+    r'^(\d+)\s+connect\(\d+,\s*\{sa_family=AF_INET,\s*'
+    r'sin_port=htons\((\d+)\),\s*sin_addr=inet_addr\("([^"]+)"\)'
+)
+WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_CREAT")
+
+
+def parse_trace_log(log_text: str) -> List[Dict]:
+    events: List[Dict] = []
+    for line in log_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        m = EXECVE_RE.match(line)
+        if m:
+            pid, path = m.groups()
+            events.append(
+                {
+                    "event_type": "process_spawn",
+                    "process_ref": {
+                        "pid": int(pid),
+                        "name": path.rsplit("/", 1)[-1],
+                        "parent_pid": 0,
+                    },
+                }
+            )
+            continue
+
+        m = OPENAT_RE.match(line)
+        if m:
+            _, path, flags = m.groups()
+            if any(flag in flags for flag in WRITE_FLAGS):
+                events.append(
+                    {
+                        "event_type": "file_write",
+                        "file_ref": {"path": path, "action": "write"},
+                    }
+                )
+            continue
+
+        m = CONNECT_RE.match(line)
+        if m:
+            _, port, ip = m.groups()
+            events.append(
+                {
+                    "event_type": "network_connect",
+                    "network_ref": {
+                        "dst_ip": ip,
+                        "dst_port": int(port),
+                        "protocol": "tcp",
+                    },
+                }
+            )
+            continue
+
+    return events
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd sensor && pytest tests/test_parser.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add sensor/parser.py sensor/tests/test_parser.py
+git commit -m "feat: add strace trace-log parser for sensor events"
+```
+
+---
+
+### Task 7 (Day 4): Sensor entrypoint + shadow image + demo samples
+
+**Files:**
+- Create: `sensor/tracer.py`
+- Create: `sensor/sensor.py`
+- Create: `shadow-image/Dockerfile`
+- Create: `samples/eicar.txt`
+- Create: `samples/harmless.sh`
+- Create: `samples/spawn_and_write.sh`
+- Create: `samples/connect_odd_port.sh`
+
+**Interfaces:**
+- Consumes: `parse_trace_log` (Task 6).
+- Produces: `sensor.py <path-to-sample>` — prints one canonical `Event` JSON per line to stdout. Consumed by the Go backend's `RunSensor` (Task 8) via `docker exec`.
+
+This task has no new unit tests (it's a thin CLI wrapper over the already-tested parser, plus shell fixtures) — verified manually below, per the plan's testing approach (Spec §10).
+
+- [ ] **Step 1: Write the tracer**
+
+```python
+# sensor/tracer.py
+import os
+import subprocess
+import tempfile
+
+
+def run_strace(sample_path: str, timeout: int = 15) -> str:
+    fd, trace_path = tempfile.mkstemp(suffix=".trace")
+    os.close(fd)
+    try:
+        subprocess.run(
+            [
+                "strace",
+                "-f",
+                "-e",
+                "trace=execve,openat,connect",
+                "-o",
+                trace_path,
+                "bash",
+                sample_path,
+            ],
+            timeout=timeout,
+            capture_output=True,
+        )
+        with open(trace_path) as f:
+            return f.read()
+    finally:
+        os.remove(trace_path)
+```
+
+- [ ] **Step 2: Write the sensor entrypoint**
+
+```python
+# sensor/sensor.py
+import json
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+
+from parser import parse_trace_log
+from tracer import run_strace
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        print("usage: sensor.py <path-to-sample>", file=sys.stderr)
+        sys.exit(1)
+
+    sample_path = sys.argv[1]
+    device_id = "shadow-node"
+
+    log_text = run_strace(sample_path)
+    raw_events = parse_trace_log(log_text)
+
+    for raw in raw_events:
+        event = {
+            "event_id": str(uuid.uuid4()),
+            "device_id": device_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "baseline_deviation_score": 0.0,
+            **raw,
+        }
+        print(json.dumps(event), flush=True)
+        time.sleep(0.3)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 3: Write the shadow image Dockerfile**
+
+```dockerfile
+# shadow-image/Dockerfile
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends strace bash && rm -rf /var/lib/apt/lists/*
+COPY ../sensor/parser.py /sensor/parser.py
+COPY ../sensor/tracer.py /sensor/tracer.py
+COPY ../sensor/sensor.py /sensor/sensor.py
+WORKDIR /samples
+CMD ["sleep", "infinity"]
+```
+
+Note: Docker build context restrictions mean `COPY ../sensor/...` won't work as-is from `shadow-image/` alone — in Task 12 the compose/build setup builds this image with the repo root as build context (`docker build -f shadow-image/Dockerfile -t mirraura-shadow:latest .`), so fix the paths now to be relative to repo root:
+
+```dockerfile
+# shadow-image/Dockerfile
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends strace bash && rm -rf /var/lib/apt/lists/*
+COPY sensor/parser.py /sensor/parser.py
+COPY sensor/tracer.py /sensor/tracer.py
+COPY sensor/sensor.py /sensor/sensor.py
+WORKDIR /samples
+CMD ["sleep", "infinity"]
+```
+
+- [ ] **Step 4: Write the demo sample scripts**
+
+```
+X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*
+```
+Save as `samples/eicar.txt` (the standard EICAR test string, exactly as shown — any deviation changes its hash).
+
+```bash
+#!/bin/bash
+echo "just printing some text"
+echo "nothing to see here" > /tmp/harmless_output.txt
+```
+Save as `samples/harmless.sh`.
+
+```bash
+#!/bin/bash
+touch /etc/mirraura-test-marker
+cat /etc/hostname > /dev/null
+```
+Save as `samples/spawn_and_write.sh`.
+
+```bash
+#!/bin/bash
+exec 3<>/dev/tcp/127.0.0.1/31337 2>/dev/null || true
+```
+Save as `samples/connect_odd_port.sh`.
+
+- [ ] **Step 5: Build the shadow image and manually verify sensor output**
+
+Run (from repo root):
+```bash
+docker build -f shadow-image/Dockerfile -t mirraura-shadow:latest .
+docker run --rm -v "$(pwd)/samples:/samples" mirraura-shadow:latest \
+  python3 /sensor/sensor.py /samples/spawn_and_write.sh
+```
+Expected: two or more JSON lines print, one with `"event_type": "process_spawn"`, one with `"event_type": "file_write"` and `"path": "/etc/mirraura-test-marker"`.
+
+Repeat for `harmless.sh` (expect no output lines, or only non-sensitive writes) and `connect_odd_port.sh` (expect one `network_connect` event with `dst_port: 31337`).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add sensor/tracer.py sensor/sensor.py shadow-image/Dockerfile samples/
+git commit -m "feat: add sensor entrypoint, shadow image, and demo samples"
+```
+
+---
+
+### Task 8 (Day 5): Go Docker manager (shadow network + container lifecycle)
+
+**Files:**
+- Create: `backend/dockermanager.go`
+- Create: `backend/dockermanager_test.go`
+- Modify: `backend/go.mod` (add `github.com/docker/docker` dependency)
+
+**Interfaces:**
+- Produces: `DockerManager` struct with `NewDockerManager() (*DockerManager, error)`, `CreateShadowNetwork(ctx, name string) (string, error)`, `StartShadowContainer(ctx, image, networkID, name string) (string, error)`, `CopyFileIntoContainer(ctx, containerID, localPath, destDir string) error`, `RunSensor(ctx, containerID, samplePathInContainer string) (<-chan string, error)`, `Teardown(ctx, containerID, networkID string) error`. Consumed by `samples.go` in Task 9.
+
+This task requires a running Docker daemon (same one used for `docker compose`), consistent with the portability requirement — no extra install beyond what's already needed.
+
+- [ ] **Step 1: Add the Docker SDK dependency**
+
+Run: `cd backend && go get github.com/docker/docker@v24.0.9`
+
+- [ ] **Step 2: Write the failing integration test**
+
+```go
+// backend/dockermanager_test.go
+package main
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+func TestShadowNetworkAndContainerLifecycle(t *testing.T) {
+	dm, err := NewDockerManager()
+	if err != nil {
+		t.Fatalf("NewDockerManager: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	networkID, err := dm.CreateShadowNetwork(ctx, "mirraura-test-net")
+	if err != nil {
+		t.Fatalf("CreateShadowNetwork: %v", err)
+	}
+
+	containerID, err := dm.StartShadowContainer(ctx, "alpine:3.19", networkID, "mirraura-test-container")
+	if err != nil {
+		t.Fatalf("StartShadowContainer: %v", err)
+	}
+
+	if err := dm.Teardown(ctx, containerID, networkID); err != nil {
+		t.Fatalf("Teardown: %v", err)
+	}
+}
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `cd backend && go test ./... -run TestShadowNetworkAndContainerLifecycle -v`
+Expected: FAIL (`DockerManager` undefined)
+
+- [ ] **Step 4: Implement the Docker manager**
+
+```go
+// backend/dockermanager.go
+package main
+
+import (
+	"archive/tar"
+	"bufio"
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
+)
+
+type DockerManager struct {
+	cli *client.Client
+}
+
+func NewDockerManager() (*DockerManager, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, err
+	}
+	return &DockerManager{cli: cli}, nil
+}
+
+func (m *DockerManager) CreateShadowNetwork(ctx context.Context, name string) (string, error) {
+	resp, err := m.cli.NetworkCreate(ctx, name, types.NetworkCreate{Driver: "bridge"})
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+func (m *DockerManager) StartShadowContainer(ctx context.Context, image, networkID, name string) (string, error) {
+	resp, err := m.cli.ContainerCreate(
+		ctx,
+		&container.Config{Image: image, Cmd: []string{"sleep", "infinity"}},
+		nil,
+		&network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				networkID: {},
+			},
+		},
+		nil,
+		name,
+	)
+	if err != nil {
+		return "", err
+	}
+	if err := m.cli.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
+func (m *DockerManager) CopyFileIntoContainer(ctx context.Context, containerID, localPath, destDir string) error {
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	hdr := &tar.Header{Name: filepath.Base(localPath), Mode: 0755, Size: int64(len(data))}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	if _, err := tw.Write(data); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	return m.cli.CopyToContainer(ctx, containerID, destDir, &buf, types.CopyToContainerOptions{})
+}
+
+func (m *DockerManager) RunSensor(ctx context.Context, containerID, samplePathInContainer string) (<-chan string, error) {
+	execID, err := m.cli.ContainerExecCreate(ctx, containerID, types.ExecConfig{
+		Cmd:          []string{"python3", "/sensor/sensor.py", samplePathInContainer},
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	attach, err := m.cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{Tty: true})
+	if err != nil {
+		return nil, err
+	}
+
+	lines := make(chan string)
+	go func() {
+		defer close(lines)
+		defer attach.Close()
+		scanner := bufio.NewScanner(attach.Reader)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				lines <- line
+			}
+		}
+	}()
+	return lines, nil
+}
+
+func (m *DockerManager) Teardown(ctx context.Context, containerID, networkID string) error {
+	timeout := 5
+	_ = m.cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+	if err := m.cli.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{Force: true}); err != nil {
+		return err
+	}
+	return m.cli.NetworkRemove(ctx, networkID)
+}
+```
+
+Note for the implementer: exact type/method names (`types.ContainerStartOptions` vs. `container.StartOptions`, etc.) can shift between `docker/docker` versions — if `go build` reports a missing/renamed type, check `go doc github.com/docker/docker/client Client` for the installed version and adjust the call, keeping the function signatures above unchanged since Task 9 depends on them.
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `cd backend && go test ./... -run TestShadowNetworkAndContainerLifecycle -v`
+Expected: PASS (requires Docker daemon running; pulls `alpine:3.19` on first run)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add backend/go.mod backend/go.sum backend/dockermanager.go backend/dockermanager_test.go
+git commit -m "feat: add Go Docker manager for shadow network/container lifecycle"
+```
+
+---
+
+### Task 9 (Day 6): Go orchestration endpoint (`POST /api/samples`)
+
+**Files:**
+- Create: `backend/types.go`
+- Create: `backend/samples.go`
+- Create: `backend/samples_test.go`
+- Modify: `backend/main.go` (register the route)
+
+**Interfaces:**
+- Consumes: `DockerManager` (Task 8), verdict-engine's `POST /score` (Task 5).
+- Produces: `Verdict` Go struct; `samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster) http.HandlerFunc`. `Broadcaster` interface (`Broadcast(msg any)`) is satisfied by `*Hub` in Task 10 — defined here so this task doesn't depend on Task 10 yet.
+
+- [ ] **Step 1: Write the shared types and broadcaster interface**
+
+```go
+// backend/types.go
+package main
+
+type ProcessRef struct {
+	PID       int    `json:"pid"`
+	Name      string `json:"name"`
+	ParentPID int    `json:"parent_pid"`
+}
+
+type NetworkRef struct {
+	DstIP    string `json:"dst_ip"`
+	DstPort  int    `json:"dst_port"`
+	Protocol string `json:"protocol"`
+}
+
+type FileRef struct {
+	Path   string `json:"path"`
+	Action string `json:"action"`
+}
+
+type Verdict struct {
+	VerdictID   string   `json:"verdict_id"`
+	SampleHash  string   `json:"sample_hash"`
+	Verdict     string   `json:"verdict"`
+	Confidence  float64  `json:"confidence"`
+	CausalChain []string `json:"causal_chain"`
+	Timestamp   string   `json:"timestamp"`
+	PrevLogHash string   `json:"prev_log_hash"`
+}
+
+type Broadcaster interface {
+	Broadcast(msg any)
+}
+```
+
+- [ ] **Step 2: Write the failing test**
+
+```go
+// backend/samples_test.go
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+type fakeBroadcaster struct{ messages []any }
+
+func (f *fakeBroadcaster) Broadcast(msg any) { f.messages = append(f.messages, msg) }
+
+func TestSamplesHandlerRejectsMissingFile(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/samples", nil)
+	rec := httptest.NewRecorder()
+
+	handler := samplesHandler(nil, "http://unused", &fakeBroadcaster{})
+	handler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestScoreWithVerdictEngine(t *testing.T) {
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Verdict{VerdictID: "v1", Verdict: "Normal", Confidence: 0})
+	}))
+	defer fakeEngine.Close()
+
+	v, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.VerdictID != "v1" {
+		t.Fatalf("expected verdict id v1, got %s", v.VerdictID)
+	}
+}
+
+func newMultipartRequest(t *testing.T, fieldName, fileName string, content []byte) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile(fieldName, fileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part.Write(content)
+	w.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/samples", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `cd backend && go test ./... -run "TestSamplesHandlerRejectsMissingFile|TestScoreWithVerdictEngine" -v`
+Expected: FAIL (`samplesHandler`, `scoreWithVerdictEngine` undefined)
+
+- [ ] **Step 4: Implement the orchestration handler**
+
+```go
+// backend/samples.go
+package main
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+const shadowImage = "mirraura-shadow:latest"
+
+func randomID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		file, header, err := r.FormFile("sample")
+		if err != nil {
+			http.Error(w, "missing 'sample' file field", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+
+		data, err := io.ReadAll(file)
+		if err != nil {
+			http.Error(w, "failed to read upload", http.StatusInternalServerError)
+			return
+		}
+		sum := sha256.Sum256(data)
+		sampleHash := hex.EncodeToString(sum[:])
+
+		tmpPath := filepath.Join(os.TempDir(), header.Filename)
+		if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+			http.Error(w, "failed to stage upload", http.StatusInternalServerError)
+			return
+		}
+		defer os.Remove(tmpPath)
+
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+
+		runID := randomID()
+		networkID, err := dm.CreateShadowNetwork(ctx, "mirraura-net-"+runID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("network create failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		containerID, err := dm.StartShadowContainer(ctx, shadowImage, networkID, "mirraura-shadow-"+runID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("container start failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		defer dm.Teardown(context.Background(), containerID, networkID)
+
+		if err := dm.CopyFileIntoContainer(ctx, containerID, tmpPath, "/samples/"); err != nil {
+			http.Error(w, fmt.Sprintf("copy into container failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		lines, err := dm.RunSensor(ctx, containerID, "/samples/"+header.Filename)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("sensor run failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		var events []json.RawMessage
+		for line := range lines {
+			raw := json.RawMessage(line)
+			hub.Broadcast(map[string]any{"type": "event", "data": raw})
+			events = append(events, raw)
+		}
+
+		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, events)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("scoring failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		hub.Broadcast(map[string]any{"type": "verdict", "data": verdict})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(verdict)
+	}
+}
+
+func scoreWithVerdictEngine(baseURL, sampleHash string, events []json.RawMessage) (*Verdict, error) {
+	body, err := json.Marshal(map[string]any{"sample_hash": sampleHash, "events": events})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.Post(baseURL+"/score", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("verdict-engine returned %d: %s", resp.StatusCode, string(b))
+	}
+	var v Verdict
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+```
+
+- [ ] **Step 5: Register the route in `main.go`**
+
+```go
+// backend/main.go — replace the mux setup in main() with:
+	verdictEngineURL := os.Getenv("VERDICT_ENGINE_URL")
+	if verdictEngineURL == "" {
+		verdictEngineURL = "http://localhost:8000"
+	}
+	dm, err := NewDockerManager()
+	if err != nil {
+		log.Fatal(err)
+	}
+	hub := NewHub()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", healthHandler)
+	mux.HandleFunc("/api/samples", samplesHandler(dm, verdictEngineURL, hub))
+```
+
+(`NewHub`/`Hub` don't exist yet — Task 10 adds them; this task can compile with a temporary no-op broadcaster if implementing out of order, but per plan order Task 10 follows immediately, so this edit lands once Task 10 is done. Leave `main.go`'s route registration for Task 10's step instead if running tasks strictly in order — see Task 10 Step 5.)
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `cd backend && go test ./... -run "TestSamplesHandlerRejectsMissingFile|TestScoreWithVerdictEngine" -v`
+Expected: PASS
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backend/types.go backend/samples.go backend/samples_test.go
+git commit -m "feat: add Go sample upload orchestration handler"
+```
+
+---
+
+### Task 10 (Day 7): WebSocket live feed + verdict list/detail proxy
+
+**Files:**
+- Create: `backend/hub.go`
+- Create: `backend/verdicts.go`
+- Modify: `backend/go.mod` (add `github.com/gorilla/websocket`)
+- Modify: `backend/main.go` (wire all routes together)
+
+**Interfaces:**
+- Produces: `Hub` (implements `Broadcaster` from Task 9) with `NewHub() *Hub`, `(*Hub).HandleWS(w, r)`, `(*Hub).Broadcast(msg any)`. `verdictsListHandler`/`verdictDetailHandler(verdictEngineURL string) http.HandlerFunc`.
+
+- [ ] **Step 1: Add the websocket dependency**
+
+Run: `cd backend && go get github.com/gorilla/websocket@v1.5.3`
+
+- [ ] **Step 2: Write the failing test**
+
+```go
+// backend/hub_test.go
+package main
+
+import (
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+func TestHubBroadcastsToConnectedClient(t *testing.T) {
+	hub := NewHub()
+	server := httptest.NewServer(nil)
+	server.Config.Handler = nil
+	mux := newTestMux(hub)
+	server.Config.Handler = mux
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[len("http"):] + "/api/live"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+	hub.Broadcast(map[string]string{"type": "test"})
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(msg) == "" {
+		t.Fatal("expected non-empty broadcast message")
+	}
+}
+```
+
+```go
+// backend/hub_test_helpers.go
+package main
+
+import "net/http"
+
+func newTestMux(hub *Hub) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/live", hub.HandleWS)
+	return mux
+}
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `cd backend && go test ./... -run TestHubBroadcastsToConnectedClient -v`
+Expected: FAIL (`Hub`, `NewHub` undefined)
+
+- [ ] **Step 4: Implement the hub and verdict proxy handlers**
+
+```go
+// backend/hub.go
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"sync"
+
+	"github.com/gorilla/websocket"
+)
+
+type Hub struct {
+	mu      sync.Mutex
+	clients map[*websocket.Conn]bool
+}
+
+func NewHub() *Hub {
+	return &Hub{clients: make(map[*websocket.Conn]bool)}
+}
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	h.mu.Lock()
+	h.clients[conn] = true
+	h.mu.Unlock()
+
+	defer func() {
+		h.mu.Lock()
+		delete(h.clients, conn)
+		h.mu.Unlock()
+		conn.Close()
+	}()
+
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			break
+		}
+	}
+}
+
+func (h *Hub) Broadcast(msg any) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for conn := range h.clients {
+		conn.WriteMessage(websocket.TextMessage, data)
+	}
+}
+```
+
+```go
+// backend/verdicts.go
+package main
+
+import (
+	"io"
+	"net/http"
+	"strings"
+)
+
+func verdictsListHandler(verdictEngineURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		resp, err := http.Get(verdictEngineURL + "/verdicts")
+		if err != nil {
+			http.Error(w, "verdict-engine unreachable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		io.Copy(w, resp.Body)
+	}
+}
+
+func verdictDetailHandler(verdictEngineURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/verdicts/")
+		resp, err := http.Get(verdictEngineURL + "/verdicts/" + id)
+		if err != nil {
+			http.Error(w, "verdict-engine unreachable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}
+}
+```
+
+- [ ] **Step 5: Wire every route together in `main.go`**
+
+```go
+// backend/main.go
+package main
+
+import (
+	"log"
+	"net/http"
+	"os"
+)
+
+func main() {
+	verdictEngineURL := os.Getenv("VERDICT_ENGINE_URL")
+	if verdictEngineURL == "" {
+		verdictEngineURL = "http://localhost:8000"
+	}
+	dm, err := NewDockerManager()
+	if err != nil {
+		log.Fatal(err)
+	}
+	hub := NewHub()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", healthHandler)
+	mux.HandleFunc("/api/samples", samplesHandler(dm, verdictEngineURL, hub))
+	mux.HandleFunc("/api/verdicts", verdictsListHandler(verdictEngineURL))
+	mux.HandleFunc("/api/verdicts/", verdictDetailHandler(verdictEngineURL))
+	mux.HandleFunc("/api/live", hub.HandleWS)
+
+	port := os.Getenv("BACKEND_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Printf("backend listening on :%s", port)
+	if err := http.ListenAndServe(":"+port, withCORS(mux)); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `cd backend && go test ./... -v`
+Expected: PASS (all tests from Tasks 1, 8, 9, 10)
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add backend/hub.go backend/hub_test.go backend/hub_test_helpers.go backend/verdicts.go backend/main.go backend/go.mod backend/go.sum
+git commit -m "feat: add websocket live feed and verdict list/detail proxy routes"
+```
+
+---
+
+### Task 11 (Day 8): Frontend scaffold + upload panel
+
+**Files:**
+- Create: `frontend/package.json`
+- Create: `frontend/vite.config.ts`
+- Create: `frontend/index.html`
+- Create: `frontend/src/main.tsx`
+- Create: `frontend/src/types.ts`
+- Create: `frontend/src/api.ts`
+- Create: `frontend/src/api.test.ts`
+- Create: `frontend/src/App.tsx`
+- Create: `frontend/src/components/UploadPanel.tsx`
+
+**Interfaces:**
+- Produces: `MirraEvent`, `Verdict` TypeScript types (mirroring the Go/Python schemas). `uploadSample(file: File): Promise<Verdict>`, `fetchVerdicts(): Promise<Verdict[]>`, `connectLive(onMessage): WebSocket` in `api.ts` — consumed by `App.tsx` and Task 12's components.
+
+- [ ] **Step 1: Scaffold the Vite project**
+
+Run: `cd frontend && npm create vite@latest . -- --template react-ts`
+
+Then add Vitest for the one pure-function test:
+
+Run: `cd frontend && npm install --save-dev vitest`
+
+Add to `frontend/package.json` scripts: `"test": "vitest run"`.
+
+- [ ] **Step 2: Write the failing test**
+
+```typescript
+// frontend/src/api.test.ts
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { fetchVerdicts, uploadSample } from "./api";
+
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn());
+});
+
+describe("api", () => {
+  it("fetchVerdicts calls the backend verdicts endpoint", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => [{ verdict_id: "v1" }],
+    });
+    const result = await fetchVerdicts();
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/verdicts"));
+    expect(result).toEqual([{ verdict_id: "v1" }]);
+  });
+
+  it("uploadSample posts multipart form data and returns the verdict", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({ verdict_id: "v2", verdict: "Normal" }),
+    });
+    const file = new File(["content"], "sample.sh");
+    const result = await uploadSample(file);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/samples"),
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(result.verdict).toBe("Normal");
+  });
+});
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+Run: `cd frontend && npm test`
+Expected: FAIL (`api.ts` doesn't exist)
+
+- [ ] **Step 4: Implement types and the API client**
+
+```typescript
+// frontend/src/types.ts
+export interface ProcessRef {
+  pid: number;
+  name: string;
+  parent_pid: number;
+}
+
+export interface NetworkRef {
+  dst_ip: string;
+  dst_port: number;
+  protocol: string;
+}
+
+export interface FileRef {
+  path: string;
+  action: string;
+}
+
+export interface MirraEvent {
+  event_id: string;
+  device_id: string;
+  event_type: "process_spawn" | "file_write" | "file_delete" | "network_connect";
+  process_ref?: ProcessRef;
+  network_ref?: NetworkRef;
+  file_ref?: FileRef;
+  timestamp: string;
+  baseline_deviation_score: number;
+}
+
+export interface Verdict {
+  verdict_id: string;
+  sample_hash: string;
+  verdict: "Normal" | "Suspicious" | "Compromised" | "Inconclusive";
+  confidence: number;
+  causal_chain: string[];
+  timestamp: string;
+  prev_log_hash: string;
+}
+```
+
+```typescript
+// frontend/src/api.ts
+import type { MirraEvent, Verdict } from "./types";
+
+const BASE = import.meta.env.VITE_BACKEND_URL || "http://localhost:8080";
+
+export async function uploadSample(file: File): Promise<Verdict> {
+  const form = new FormData();
+  form.append("sample", file);
+  const res = await fetch(`${BASE}/api/samples`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function fetchVerdicts(): Promise<Verdict[]> {
+  const res = await fetch(`${BASE}/api/verdicts`);
+  return res.json();
+}
+
+export type LiveMessage =
+  | { type: "event"; data: MirraEvent }
+  | { type: "verdict"; data: Verdict };
+
+export function connectLive(onMessage: (msg: LiveMessage) => void): WebSocket {
+  const wsUrl = BASE.replace(/^http/, "ws") + "/api/live";
+  const ws = new WebSocket(wsUrl);
+  ws.onmessage = (ev) => onMessage(JSON.parse(ev.data));
+  return ws;
+}
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `cd frontend && npm test`
+Expected: PASS
+
+- [ ] **Step 6: Build the upload panel and wire `App.tsx`**
+
+```tsx
+// frontend/src/components/UploadPanel.tsx
+import { useRef, useState } from "react";
+import { uploadSample } from "../api";
+import type { Verdict } from "../types";
+
+export function UploadPanel({ onVerdict }: { onVerdict: (v: Verdict) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleUpload() {
+    const file = inputRef.current?.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const verdict = await uploadSample(file);
+      onVerdict(verdict);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <input ref={inputRef} type="file" disabled={busy} />
+      <button onClick={handleUpload} disabled={busy}>
+        {busy ? "Detonating in shadow node..." : "Upload sample"}
+      </button>
+      {error && <p style={{ color: "red" }}>{error}</p>}
+    </div>
+  );
+}
+```
+
+```tsx
+// frontend/src/App.tsx
+import { useState } from "react";
+import { UploadPanel } from "./components/UploadPanel";
+import type { Verdict } from "./types";
+
+function App() {
+  const [lastVerdict, setLastVerdict] = useState<Verdict | null>(null);
+
+  return (
+    <div>
+      <h1>Mirraura</h1>
+      <UploadPanel onVerdict={setLastVerdict} />
+      {lastVerdict && (
+        <pre>{JSON.stringify(lastVerdict, null, 2)}</pre>
+      )}
+    </div>
+  );
+}
+
+export default App;
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add frontend
+git commit -m "feat: scaffold frontend with upload panel and API client"
+```
+
+---
+
+### Task 12 (Day 9): Live event feed, verdict panel, audit log table
+
+**Files:**
+- Create: `frontend/src/components/EventFeed.tsx`
+- Create: `frontend/src/components/VerdictPanel.tsx`
+- Create: `frontend/src/components/AuditLogTable.tsx`
+- Modify: `frontend/src/App.tsx`
+
+**Interfaces:**
+- Consumes: `connectLive`, `fetchVerdicts`, `MirraEvent`, `Verdict` (Task 11).
+
+No new automated tests in this task — these are presentational components with no branching logic beyond what `api.ts` (already tested) provides; correctness is checked via the manual end-to-end pass in Task 13, consistent with the plan's testing approach (Spec §10).
+
+- [ ] **Step 1: Build the live event feed**
+
+```tsx
+// frontend/src/components/EventFeed.tsx
+import type { MirraEvent } from "../types";
+
+export function EventFeed({ events }: { events: MirraEvent[] }) {
+  return (
+    <div>
+      <h2>Live Event Feed</h2>
+      <ul>
+        {events.map((e) => (
+          <li key={e.event_id}>
+            [{e.timestamp}] {e.event_type}
+            {e.process_ref && ` — process '${e.process_ref.name}' (pid ${e.process_ref.pid})`}
+            {e.file_ref && ` — ${e.file_ref.action} '${e.file_ref.path}'`}
+            {e.network_ref && ` — connect ${e.network_ref.dst_ip}:${e.network_ref.dst_port}`}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 2: Build the verdict panel**
+
+```tsx
+// frontend/src/components/VerdictPanel.tsx
+import type { Verdict } from "../types";
+
+const VERDICT_COLOR: Record<Verdict["verdict"], string> = {
+  Normal: "green",
+  Suspicious: "orange",
+  Compromised: "red",
+  Inconclusive: "gray",
+};
+
+export function VerdictPanel({ verdict }: { verdict: Verdict | null }) {
+  if (!verdict) return <p>No verdict yet — upload a sample.</p>;
+  return (
+    <div>
+      <h2 style={{ color: VERDICT_COLOR[verdict.verdict] }}>
+        {verdict.verdict} ({(verdict.confidence * 100).toFixed(0)}% confidence)
+      </h2>
+      <h3>Causal chain</h3>
+      <ol>
+        {verdict.causal_chain.map((reason, i) => (
+          <li key={i}>{reason}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 3: Build the audit log table**
+
+```tsx
+// frontend/src/components/AuditLogTable.tsx
+import { useEffect, useState } from "react";
+import { fetchVerdicts } from "../api";
+import type { Verdict } from "../types";
+
+export function AuditLogTable({ refreshKey }: { refreshKey: number }) {
+  const [verdicts, setVerdicts] = useState<Verdict[]>([]);
+
+  useEffect(() => {
+    fetchVerdicts().then(setVerdicts).catch(() => setVerdicts([]));
+  }, [refreshKey]);
+
+  return (
+    <div>
+      <h2>Audit Log</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Sample Hash</th>
+            <th>Verdict</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          {verdicts.map((v) => (
+            <tr key={v.verdict_id}>
+              <td>{v.timestamp}</td>
+              <td>{v.sample_hash.slice(0, 12)}...</td>
+              <td>{v.verdict}</td>
+              <td>{v.confidence.toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Wire it all into `App.tsx`**
+
+```tsx
+// frontend/src/App.tsx
+import { useEffect, useState } from "react";
+import { connectLive } from "./api";
+import { AuditLogTable } from "./components/AuditLogTable";
+import { EventFeed } from "./components/EventFeed";
+import { UploadPanel } from "./components/UploadPanel";
+import { VerdictPanel } from "./components/VerdictPanel";
+import type { MirraEvent, Verdict } from "./types";
+
+function App() {
+  const [events, setEvents] = useState<MirraEvent[]>([]);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    const ws = connectLive((msg) => {
+      if (msg.type === "event") setEvents((prev) => [...prev, msg.data]);
+      if (msg.type === "verdict") setVerdict(msg.data);
+    });
+    return () => ws.close();
+  }, []);
+
+  function handleUpload(v: Verdict) {
+    setVerdict(v);
+    setRefreshKey((k) => k + 1);
+  }
+
+  function handleNewRun() {
+    setEvents([]);
+  }
+
+  return (
+    <div>
+      <h1>Mirraura</h1>
+      <div onClickCapture={handleNewRun}>
+        <UploadPanel onVerdict={handleUpload} />
+      </div>
+      <EventFeed events={events} />
+      <VerdictPanel verdict={verdict} />
+      <AuditLogTable refreshKey={refreshKey} />
+    </div>
+  );
+}
+
+export default App;
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src
+git commit -m "feat: add live event feed, verdict panel, and audit log table"
+```
+
+---
+
+### Task 13 (Day 10): Full Docker Compose wiring + end-to-end demo checklist
+
+**Files:**
+- Modify: `docker-compose.yml`
+- Create: `frontend/Dockerfile`
+- Modify: `.env.example`
+
+**Interfaces:** None new — this task wires together every service built in Tasks 1-12.
+
+- [ ] **Step 1: Add the frontend Dockerfile**
+
+```dockerfile
+# frontend/Dockerfile
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+RUN npm install -g serve
+COPY --from=build /app/dist ./dist
+EXPOSE 5173
+CMD ["serve", "-s", "dist", "-l", "5173"]
+```
+
+- [ ] **Step 2: Extend `docker-compose.yml` with the frontend, shadow image build, and Docker socket mount**
+
+```yaml
+# docker-compose.yml
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    environment:
+      - BACKEND_PORT=8080
+      - VERDICT_ENGINE_URL=http://verdict-engine:8000
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - verdict-engine
+
+  verdict-engine:
+    build: ./verdict-engine
+    ports:
+      - "${VERDICT_ENGINE_PORT:-8000}:8000"
+    volumes:
+      - audit-log-data:/data
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      - VITE_BACKEND_URL=http://localhost:${BACKEND_PORT:-8080}
+    depends_on:
+      - backend
+
+volumes:
+  audit-log-data:
+```
+
+Note: the shadow image (`mirraura-shadow:latest`) is built separately, not through Compose (it isn't a long-running service) — that's Step 3.
+
+- [ ] **Step 3: Write a one-shot setup script so "one command" really means one command**
+
+```bash
+#!/bin/bash
+# setup.sh — run once after cloning, or after pulling changes to shadow-image/sensor/
+set -e
+docker build -f shadow-image/Dockerfile -t mirraura-shadow:latest .
+docker compose up --build
+```
+Save as `setup.sh` at the repo root, `chmod +x setup.sh`.
+
+- [ ] **Step 4: Run the full stack**
+
+Run: `cp .env.example .env && ./setup.sh`
+Expected: three services start; `http://localhost:5173` loads the dashboard.
+
+- [ ] **Step 5: Manual end-to-end demo checklist (run against the live stack)**
+
+For each sample in `samples/`, upload via the dashboard (or `curl -F sample=@samples/X http://localhost:8080/api/samples`) and confirm:
+
+| Sample | Expected verdict | Expected confidence |
+|---|---|---|
+| `eicar.txt` | Compromised | 1.0 |
+| `harmless.sh` | Normal | 0.0 |
+| `spawn_and_write.sh` | Suspicious | 0.55 |
+| `connect_odd_port.sh` | Suspicious | 0.2 |
+
+Also confirm: the audit log table shows all four runs after refresh, and re-running `AuditLog(...).verify_chain()` against the mounted volume's `audit_log.jsonl` (e.g. via `docker compose exec verdict-engine python -c "from pathlib import Path; from audit_log import AuditLog; print(AuditLog(Path('/data/audit_log.jsonl')).verify_chain())"`) prints `True`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add docker-compose.yml frontend/Dockerfile setup.sh .env.example
+git commit -m "feat: wire full docker-compose stack and add end-to-end demo checklist"
+```
+
+---
+
+## Self-Review Notes
+
+- **Spec coverage:** §4 (architecture/flow) → Tasks 1, 8, 9. §5 (event schema) → Task 2 (Python), Task 6/7 (sensor), Task 11 (TS). §6 (verdict engine) → Tasks 2-5. §7 (audit log) → Task 4. §8 (API surface) → Tasks 9, 10. §9 (frontend) → Tasks 11, 12. §10 (testing) → covered per-task (unit tests each task, integration in Task 8, end-to-end checklist in Task 13). §11 (demo samples) → Task 7 + verified in Task 13. §12 (tech stack) → reflected in every task's language choice. §13 (portability) → Task 13.
+- **Placeholder scan:** none found — every step has runnable code or an exact command.
+- **Type consistency checked:** `Event`/`Verdict` field names match across `schemas.py` (Task 2), `app.py` (Task 5), `types.go`/`Verdict` (Task 9), and `types.ts` (Task 11). `score_events`/`verdict_from_score` signatures introduced in Task 3 are used unchanged in Task 5. `DockerManager` method signatures from Task 8 are used unchanged in Task 9.
