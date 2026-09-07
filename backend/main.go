@@ -8,8 +8,22 @@ import (
 )
 
 func main() {
+	verdictEngineURL := os.Getenv("VERDICT_ENGINE_URL")
+	if verdictEngineURL == "" {
+		verdictEngineURL = "http://localhost:8000"
+	}
+	dm, err := NewDockerManager()
+	if err != nil {
+		log.Fatal(err)
+	}
+	hub := NewHub()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)
+	mux.HandleFunc("/api/samples", samplesHandler(dm, verdictEngineURL, hub))
+	mux.HandleFunc("/api/verdicts", verdictsListHandler(verdictEngineURL))
+	mux.HandleFunc("/api/verdicts/", verdictDetailHandler(verdictEngineURL))
+	mux.HandleFunc("/api/live", hub.HandleWS)
 
 	port := os.Getenv("BACKEND_PORT")
 	if port == "" {

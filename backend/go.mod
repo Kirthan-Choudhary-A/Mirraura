@@ -2,7 +2,10 @@ module mirraura/backend
 
 go 1.25.0
 
-require github.com/docker/docker v24.0.9+incompatible
+require (
+	github.com/docker/docker v24.0.9+incompatible
+	github.com/gorilla/websocket v1.5.3
+)
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -17,6 +20,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
