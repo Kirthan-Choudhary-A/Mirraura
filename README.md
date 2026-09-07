@@ -1,6 +1,6 @@
 # Mirraura
 
-A shadow-honeypot prototype: it detonates uploaded files inside a throwaway,
+A shadow honeypot: it detonates uploaded files inside a throwaway,
 network-isolated Docker container and scores their behavior for verdicts
 like `Suspicious` or `Compromised`.
 
