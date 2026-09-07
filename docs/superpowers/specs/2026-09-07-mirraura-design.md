@@ -1,8 +1,8 @@
-# Mirraura — Prototype Design (Sub-project 1)
+# Mirraura — Design (Sub-project 1)
 
 Status: approved for implementation planning
 Date: 2026-09-07
-Scope: 10-day working prototype. Sub-project 2 (finishing phase, ~3 weeks after) is scoped separately at the end of this doc and is NOT built now.
+Scope: initial build (Sub-project 1). Sub-project 2 (finishing phase, ~3 weeks after) is scoped separately at the end of this doc and is NOT built now.
 
 ## 1. Problem & Context
 
@@ -10,12 +10,12 @@ Academic security project (team of several, solo coder). Core idea: a **shadow h
 
 Mentor requires a polyglot stack (3-4 languages, each used where it's suited) and Python specifically.
 
-## 2. Goals (prototype)
+## 2. Goals (this build)
 
 - End-to-end, real, demoable loop: upload a file → shadow container spun up → file detonated inside it → behavior captured → verdict produced with confidence + causal chain → verdict written to a tamper-evident audit log → all of this visible live on a dashboard.
 - Every technology choice must be explainable in one or two sentences (see companion `docs/concepts.md`).
 
-## 3. Non-goals (explicitly cut from the prototype, deferred to sub-project 2)
+## 3. Non-goals (explicitly cut from this build, deferred to sub-project 2)
 
 - Real device fingerprint cloning — the shadow container uses the same base image as "real," not a cloned fingerprint.
 - Multi-OS sensors — Linux containers only.
@@ -73,7 +73,7 @@ Every sensor observation, regardless of source, is normalized to:
 
 ## 6. Verdict Engine
 
-**Static check:** SHA-256 of the uploaded sample checked against a local known-bad hash set (JSON file for the prototype). Hit → immediate `Compromised`, confidence 1.0, causal chain = `["sample hash matches known-bad entry <hash>"]`.
+**Static check:** SHA-256 of the uploaded sample checked against a local known-bad hash set (JSON file for now). Hit → immediate `Compromised`, confidence 1.0, causal chain = `["sample hash matches known-bad entry <hash>"]`.
 
 **Behavioral check (if no hash hit):** a small set of weighted rules evaluated over the event stream from the shadow container, e.g.:
 
@@ -146,7 +146,7 @@ Append-only JSON-lines file. Each entry's stored hash = `SHA256(entry_json + pre
 
 ## 13. Portability (run on any teammate's device)
 
-**Requirement:** any teammate with Docker installed can clone the repo and run the full prototype with one command — no manual language/runtime installs, no machine-specific paths.
+**Requirement:** any teammate with Docker installed can clone the repo and run the full project with one command — no manual language/runtime installs, no machine-specific paths.
 
 - **`docker-compose.yml` at the repo root** defines every service: `backend` (Go), `verdict-engine` (Python), `frontend` (React, served via a small static/dev server), plus the shadow-container base image is built from a `Dockerfile` checked into the repo (not pulled from an untracked local image).
 - **One command to run:** `docker compose up --build`. That's the whole setup story for the demo.

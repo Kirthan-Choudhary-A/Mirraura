@@ -1,14 +1,14 @@
-# Mirraura Prototype Implementation Plan
+# Mirraura Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the 10-day working prototype — upload a file → shadow container detonates it → sensor captures behavior → verdict engine scores it (hash + rule-based) with confidence and causal chain → hash-chained audit log → live dashboard.
+**Goal:** Build the core loop — upload a file → shadow container detonates it → sensor captures behavior → verdict engine scores it (hash + rule-based) with confidence and causal chain → hash-chained audit log → live dashboard.
 
 **Architecture:** Go backend orchestrates Docker (shadow network + shadow container lifecycle) and proxies to a Python FastAPI verdict engine (scoring + audit log) and a Python sensor (runs `strace` inside the shadow container, parses syscalls into canonical events). React/TypeScript frontend shows the live event feed, verdict, and audit log. Everything ships as a `docker-compose.yml` so any teammate with Docker can run it with one command.
 
 **Tech Stack:** Go (stdlib `net/http` + `github.com/docker/docker` client + `github.com/gorilla/websocket`), Python 3.12 (FastAPI + Pydantic + pytest, stdlib `subprocess`/`re`/`hashlib`/`json` for the sensor and audit log), TypeScript + React + Vite, Docker Compose.
 
-**Spec:** `docs/superpowers/specs/2026-09-07-mirraura-prototype-design.md`
+**Spec:** `docs/superpowers/specs/2026-09-07-mirraura-design.md`
 
 ## Global Constraints
 
@@ -17,7 +17,7 @@
 - Verdict schema fields: `verdict_id, sample_hash, verdict, confidence, causal_chain, timestamp, prev_log_hash`. (Spec §6)
 - Verdict banding: no telemetry → `Inconclusive` (0.0); telemetry but no rule fired → `Normal` (0.0); `0.0 < confidence < 0.6` → `Suspicious`; `confidence >= 0.6` → `Compromised`. (Spec §6, corrected)
 - Rule weights: child process spawn +0.3, write to sensitive path (`/etc/`, `/bin/`, `/usr/`, `/boot/`, `/sbin/`) +0.25, connection to a port outside `{80, 443}` +0.2, more than 5 file writes/deletes +0.25. Confidence capped at 1.0. (Spec §6)
-- Known-bad hash set: JSON file, SHA-256 keyed. EICAR test file hash `275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0` is the one entry for the prototype. Hash hit → `Compromised`, confidence 1.0. (Spec §6, §11)
+- Known-bad hash set: JSON file, SHA-256 keyed. EICAR test file hash `275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0` is the one entry for this build. Hash hit → `Compromised`, confidence 1.0. (Spec §6, §11)
 - Audit log: append-only JSON-lines, each entry's `entry_hash = SHA256(json.dumps(entry_with_prev_log_hash, sort_keys=True))`, `prev_log_hash` of entry N = `entry_hash` of entry N-1, genesis = `"0"*64`. (Spec §7)
 - Portability: `docker compose up --build` from repo root is the only setup step; config via `.env` (checked-in `.env.example`); no hardcoded absolute/machine-specific paths. (Spec §13)
 - Demo sample set and expected verdicts: EICAR → `Compromised` (hash hit); harmless script → `Normal`; script spawning a process + writing to `/etc/` → `Suspicious` (0.55); script connecting to a non-standard port only → `Suspicious` (0.2). (Spec §11)
@@ -87,7 +87,7 @@ Mirraura/
 
 ---
 
-### Task 1 (Day 1): Repo scaffold + Docker Compose skeleton with health checks
+### Task 1: Repo scaffold + Docker Compose skeleton with health checks
 
 **Files:**
 - Create: `.gitignore`
@@ -322,7 +322,7 @@ git commit -m "feat: scaffold backend + verdict-engine with health checks and co
 
 ---
 
-### Task 2 (Day 1): Canonical event/verdict schemas + hash lookup
+### Task 2: Canonical event/verdict schemas + hash lookup
 
 **Files:**
 - Create: `verdict-engine/schemas.py`
@@ -444,7 +444,7 @@ git commit -m "feat: add canonical event/verdict schemas and known-bad hash look
 
 ---
 
-### Task 3 (Day 2): Rule-based behavioral scorer
+### Task 3: Rule-based behavioral scorer
 
 **Files:**
 - Create: `verdict-engine/rule_scorer.py`
@@ -600,7 +600,7 @@ git commit -m "feat: add weighted rule-based behavioral scorer"
 
 ---
 
-### Task 4 (Day 2): Hash-chained audit log
+### Task 4: Hash-chained audit log
 
 **Files:**
 - Create: `verdict-engine/audit_log.py`
@@ -733,7 +733,7 @@ git commit -m "feat: add hash-chained append-only audit log"
 
 ---
 
-### Task 5 (Day 3): Verdict engine service (`/score`, `/verdicts`, `/verdicts/{id}`)
+### Task 5: Verdict engine service (`/score`, `/verdicts`, `/verdicts/{id}`)
 
 **Files:**
 - Modify: `verdict-engine/app.py`
@@ -901,7 +901,7 @@ git commit -m "feat: wire verdict engine score/list/get endpoints"
 
 ---
 
-### Task 6 (Day 3): Sensor trace-log parser (pure function)
+### Task 6: Sensor trace-log parser (pure function)
 
 **Files:**
 - Create: `sensor/parser.py`
@@ -1038,7 +1038,7 @@ git commit -m "feat: add strace trace-log parser for sensor events"
 
 ---
 
-### Task 7 (Day 4): Sensor entrypoint + shadow image + demo samples
+### Task 7: Sensor entrypoint + shadow image + demo samples
 
 **Files:**
 - Create: `sensor/tracer.py`
@@ -1203,7 +1203,7 @@ git commit -m "feat: add sensor entrypoint, shadow image, and demo samples"
 
 ---
 
-### Task 8 (Day 5): Go Docker manager (shadow network + container lifecycle)
+### Task 8: Go Docker manager (shadow network + container lifecycle)
 
 **Files:**
 - Create: `backend/dockermanager.go`
@@ -1399,7 +1399,7 @@ git commit -m "feat: add Go Docker manager for shadow network/container lifecycl
 
 ---
 
-### Task 9 (Day 6): Go orchestration endpoint (`POST /api/samples`)
+### Task 9: Go orchestration endpoint (`POST /api/samples`)
 
 **Files:**
 - Create: `backend/types.go`
@@ -1678,7 +1678,7 @@ git commit -m "feat: add Go sample upload orchestration handler"
 
 ---
 
-### Task 10 (Day 7): WebSocket live feed + verdict list/detail proxy
+### Task 10: WebSocket live feed + verdict list/detail proxy
 
 **Files:**
 - Create: `backend/hub.go`
@@ -1911,7 +1911,7 @@ git commit -m "feat: add websocket live feed and verdict list/detail proxy route
 
 ---
 
-### Task 11 (Day 8): Frontend scaffold + upload panel
+### Task 11: Frontend scaffold + upload panel
 
 **Files:**
 - Create: `frontend/package.json`
@@ -2131,7 +2131,7 @@ git commit -m "feat: scaffold frontend with upload panel and API client"
 
 ---
 
-### Task 12 (Day 9): Live event feed, verdict panel, audit log table
+### Task 12: Live event feed, verdict panel, audit log table
 
 **Files:**
 - Create: `frontend/src/components/EventFeed.tsx`
@@ -2302,7 +2302,7 @@ git commit -m "feat: add live event feed, verdict panel, and audit log table"
 
 ---
 
-### Task 13 (Day 10): Full Docker Compose wiring + end-to-end demo checklist
+### Task 13: Full Docker Compose wiring + end-to-end demo checklist
 
 **Files:**
 - Modify: `docker-compose.yml`
