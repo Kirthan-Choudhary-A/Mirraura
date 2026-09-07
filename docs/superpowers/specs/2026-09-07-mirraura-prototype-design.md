@@ -84,7 +84,13 @@ Every sensor observation, regardless of source, is normalized to:
 | Outbound connection to a non-standard/unlisted port | +0.2 |
 | Deleted or modified >N files rapidly | +0.25 |
 
-Weights sum into a confidence score (capped at 1.0). Verdict label from score: `< 0.3 → Normal`, `0.3-0.6 → Suspicious`, `0.6-0.85 → Compromised`, tie/no signal → `Inconclusive`. The causal chain is literally the ordered list of rules that fired, each naming the triggering event.
+Weights sum into a confidence score (capped at 1.0). Verdict label:
+- No telemetry captured at all (sensor produced zero events — e.g. it crashed or the sample didn't run) → `Inconclusive`, confidence 0.0.
+- Telemetry captured, no rule fired → `Normal`, confidence 0.0.
+- Any rule(s) fired, total confidence `> 0.0` and `< 0.6` → `Suspicious`.
+- Total confidence `>= 0.6` → `Compromised`.
+
+The causal chain is literally the ordered list of rules that fired, each naming the triggering event.
 
 **Output verdict schema:**
 
