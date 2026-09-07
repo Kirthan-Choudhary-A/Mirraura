@@ -138,7 +138,19 @@ Append-only JSON-lines file. Each entry's stored hash = `SHA256(entry_json + pre
 - **TypeScript + React** — dashboard.
 - **Docker** — provides the "dummy network" (a Docker network) and "shadow node" (a container), without needing real VM/hypervisor infrastructure.
 
-## 13. Sub-project 2 (finishing phase, ~3 weeks — scoped later in detail)
+## 13. Portability (run on any teammate's device)
+
+**Requirement:** any teammate with Docker installed can clone the repo and run the full prototype with one command — no manual language/runtime installs, no machine-specific paths.
+
+- **`docker-compose.yml` at the repo root** defines every service: `backend` (Go), `verdict-engine` (Python), `frontend` (React, served via a small static/dev server), plus the shadow-container base image is built from a `Dockerfile` checked into the repo (not pulled from an untracked local image).
+- **One command to run:** `docker compose up --build`. That's the whole setup story for the demo.
+- **Config via `.env`** — a checked-in `.env.example` lists every required variable (ports, known-bad hash file path, etc.); nothing is hardcoded to one machine.
+- **Only host prerequisite:** Docker (+ Docker Compose, bundled with Docker Desktop). The backend needs access to the host's Docker socket to spin up shadow containers, which `docker-compose.yml` mounts explicitly.
+- **No absolute paths / no machine-specific assumptions** anywhere in code — everything relative to the repo root or configured via env vars.
+
+This also means the "dummy network" and "shadow node" containers are created *by* the already-running backend container talking to the host Docker daemon — same mechanism in dev, on a teammate's laptop, or in the demo.
+
+## 14. Sub-project 2 (finishing phase, ~3 weeks — scoped later in detail)
 
 - Continuous behavioral monitoring service on the "real" container (baseline deviation scoring, independent of upload trigger).
 - Human-approval gate: new/changed rules sit in a "pending" state until approved in the UI before they affect live verdicts.

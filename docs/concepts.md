@@ -37,6 +37,8 @@ Plain-English notes on every concept and technology used, so you can explain the
 
 **WebSocket** — A persistent two-way connection between backend and frontend, used so the dashboard shows events and verdicts *as they happen* during a run, instead of the user having to refresh a page.
 
+**Docker Compose (portability)** — A single YAML file that describes every service in the project (backend, verdict engine, frontend) and how they connect. Anyone with Docker installed runs `docker compose up --build` and gets the identical setup you have — same versions, same config, no "install Go 1.22, Python 3.11, Node 20 by hand" step for each teammate's machine. This is what makes the project run identically on any teammate's device.
+
 ## The loop, in one sentence each
 
 1. **Trigger** — user uploads a file through the frontend.
