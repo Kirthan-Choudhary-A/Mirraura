@@ -15,6 +15,7 @@ func verdictsListHandler(verdictEngineURL string) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
 	}
 }
