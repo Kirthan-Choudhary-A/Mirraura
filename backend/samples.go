@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -81,8 +82,12 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			return
 		}
 
-		var events []json.RawMessage
+		events := []json.RawMessage{}
 		for line := range lines {
+			if !json.Valid([]byte(line)) {
+				log.Printf("sensor: non-JSON line ignored: %s", line)
+				continue
+			}
 			raw := json.RawMessage(line)
 			hub.Broadcast(map[string]any{"type": "event", "data": raw})
 			events = append(events, raw)

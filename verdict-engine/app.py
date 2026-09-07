@@ -1,3 +1,4 @@
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,12 +13,12 @@ from rule_scorer import score_events, verdict_from_score
 from schemas import Event, Verdict
 
 app = FastAPI()
-audit_log = AuditLog(Path("/data/audit_log.jsonl"))
+audit_log = AuditLog(Path(os.getenv("AUDIT_LOG_PATH", "/data/audit_log.jsonl")))
 
 
 class ScoreRequest(BaseModel):
     sample_hash: str
-    events: List[Event]
+    events: List[Event] = []
 
 
 def _strip_entry_hash(record: dict) -> dict:

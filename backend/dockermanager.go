@@ -29,7 +29,7 @@ func NewDockerManager() (*DockerManager, error) {
 }
 
 func (m *DockerManager) CreateShadowNetwork(ctx context.Context, name string) (string, error) {
-	resp, err := m.cli.NetworkCreate(ctx, name, types.NetworkCreate{Driver: "bridge"})
+	resp, err := m.cli.NetworkCreate(ctx, name, types.NetworkCreate{Driver: "bridge", Internal: true})
 	if err != nil {
 		return "", err
 	}

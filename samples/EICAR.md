@@ -24,7 +24,7 @@ caught).
 3. Verify the hash matches the known-bad entry in
    `verdict-engine/known_bad_hashes.json`:
    ```
-   275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0
+   275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f
    ```
 4. Upload it through the demo before removing the exclusion, since Defender
    will quarantine the file again the moment the exclusion is lifted.
