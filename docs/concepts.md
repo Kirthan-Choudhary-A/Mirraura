@@ -2,6 +2,21 @@
 
 Plain-English notes on every concept and technology used, so you can explain the "what" and "why" without fumbling. Organized so you can read top to bottom as a script, or jump to whatever the examiner asks about.
 
+**This file is a living document.** Every time a new tool, library, or language gets added to the project, add an entry for it here — what it is, why it was chosen over the alternatives. This is the doc teammates read to get oriented, so keep it current as the project grows.
+
+## About This Project
+
+Mirraura is a security-research project: a **shadow honeypot** that detonates an untrusted uploaded file inside a throwaway Docker container (instead of the real device), watches what it does, and scores the behavior with a confidence level and a plain-English explanation — not just a yes/no.
+
+**Current architecture:**
+- A **Go** backend orchestrates the Docker lifecycle (spin up a network + container per upload, run the sample, tear down) and exposes the API/WebSocket the frontend talks to.
+- A **Python** verdict engine (FastAPI) does the actual scoring: a known-bad hash lookup plus a weighted rule-based behavioral scorer, and owns the tamper-evident audit log.
+- A **Python** sensor runs inside the shadow container, traces the sample's syscalls via `strace`, and reports what it saw in a common event format.
+- A **React + TypeScript** dashboard shows the live event feed, the verdict, and the audit log in real time.
+- Everything ships as one **Docker Compose** stack (`docker compose up --build`) so it runs identically on any teammate's machine.
+
+See "The loop, in one sentence each" at the bottom of this file for the full request-to-verdict walkthrough, and the design spec (`docs/superpowers/specs/2026-09-07-mirraura-design.md`) for the complete requirements this was built against.
+
 ## Core security concepts
 
 **Shadow honeypot** — A research concept (Anagnostakis et al.) where, instead of a honeypot that just sits there waiting to be attacked, you run a live *shadow copy* of the real system that inspects anything untrusted *in parallel* with the real device. The real device is never blocked waiting for a verdict — it keeps working while the shadow copy takes the risk. Only if the shadow copy's verdict comes back bad does the real device get protected/blocked. That's the "shadow" — a parallel mirror, not a passive trap.
@@ -25,19 +40,35 @@ Plain-English notes on every concept and technology used, so you can explain the
 
 **Re-validation loop** (phase 2) — After updating the scorer/model, you replay old recorded runs through it and check whether it now catches things it used to miss. That before/after comparison ("X% of previously-missed samples now detected") is a concrete, demoable improvement metric.
 
-## Tech stack
+## Languages — what and why
 
-**Go (backend orchestrator)** — Chosen because it's genuinely good at exactly what the orchestrator needs: talking to the Docker API to spin up/tear down containers and networks, and handling many concurrent things (multiple runs, a live WebSocket feed to the frontend) without much ceremony. It compiles to a single binary, which is also just convenient for a demo.
+**Go (backend orchestrator, `backend/`)** — Genuinely good at exactly what the orchestrator needs: talking to the Docker API to spin up/tear down containers and networks, and handling many concurrent things (multiple runs, a live WebSocket feed to the frontend) without much ceremony. Compiles to a single binary — convenient for a demo, no runtime to install on the machine that runs it.
 
-**Python (verdict engine + in-container sensor)** — Chosen because it's fast to write correct data-processing/scoring logic in, it's the natural language for anything ML-adjacent (so the phase-2 trained classifier slots in with no rewrite), and it's what your mentor expects to see.
+**Python (verdict engine + in-container sensor, `verdict-engine/`, `sensor/`)** — Fast to write correct data-processing/scoring logic in, the natural language for anything ML-adjacent (so a phase-2 trained classifier slots in with no rewrite), and the language the mentor expects to see used.
 
-**TypeScript + React (frontend)** — A standard, well-supported way to build a live dashboard (file upload, a real-time event feed, verdict display, audit log table) with strong typing so the UI's data shapes stay honest against the backend's schemas.
+**TypeScript + React (frontend, `frontend/`)** — A standard, well-supported way to build a live dashboard (file upload, a real-time event feed, verdict display, audit log table) with strong typing so the UI's data shapes stay honest against the backend's schemas.
 
-**Docker (infrastructure, not a "language" but worth explaining)** — Provides both the "dummy network" (a Docker network) and the "shadow node" (a container) without needing real virtual machines or hypervisor setup. It's what makes the whole loop scriptable and demoable on a single laptop in the time available.
+## Tools & libraries — what and why
 
-**WebSocket** — A persistent two-way connection between backend and frontend, used so the dashboard shows events and verdicts *as they happen* during a run, instead of the user having to refresh a page.
+**Docker** — Provides both the "dummy network" (a Docker network) and the "shadow node" (a container) without needing real virtual machines or hypervisor setup. Makes the whole loop scriptable and demoable on a single laptop.
 
-**Docker Compose (portability)** — A single YAML file that describes every service in the project (backend, verdict engine, frontend) and how they connect. Anyone with Docker installed runs `docker compose up --build` and gets the identical setup you have — same versions, same config, no "install Go 1.22, Python 3.11, Node 20 by hand" step for each teammate's machine. This is what makes the project run identically on any teammate's device.
+**Docker Compose (portability)** — A single YAML file (`docker-compose.yml`, `name: mirraura`) describing every service and how they connect. Anyone with Docker installed runs `docker compose up --build` (via `setup.sh`, which also builds the shadow image first) and gets the identical setup — same versions, same config, no per-teammate manual installs. This is what makes the project run identically on any machine.
+
+**strace (sensor, inside the shadow container)** — A standard Linux tool that logs every syscall a process makes. The sensor runs the sample under `strace -f -e trace=execve,openat,connect` so it sees process spawns, file writes, and network connections without writing a custom kernel-level instrumentation layer — a well-understood, battle-tested way to observe behavior cheaply.
+
+**FastAPI (verdict engine, Python)** — Chosen over a bare Flask app because it validates incoming/outgoing JSON against typed models (Pydantic) automatically, which is exactly what a service defining a strict canonical event/verdict schema wants — a malformed request gets rejected with a clear error instead of silently corrupting a verdict.
+
+**Pydantic (verdict engine, Python)** — FastAPI's typed-model layer; this is *where* the canonical event/verdict schema actually lives in code (`verdict-engine/schemas.py`) — one source of truth that both validates requests and serializes responses.
+
+**pytest (Python testing, `verdict-engine/`, `sensor/`)** — The standard Python test runner; used with plain `assert` statements and, for the audit log, `tmp_path`/`conftest.py` fixtures so tests never touch real state on disk.
+
+**gorilla/websocket (Go)** — The standard, well-known Go WebSocket library (Go's standard library doesn't include WebSocket support) — used for the live event feed to the dashboard.
+
+**docker/docker (Go)** — The official Docker Engine SDK for Go; used instead of hand-rolling raw HTTP calls to the Docker socket, since container/network lifecycle management (create, start, exec, copy files in, teardown) is exactly what it's built for.
+
+**Vite + Vitest (frontend)** — Vite for a fast dev server and build (React + TypeScript template); Vitest (Vite-native test runner) for the one meaningful frontend unit test (the API client's request/response shapes) — no separate test-runner config needed since it shares Vite's setup.
+
+**WebSocket (protocol, used by gorilla/websocket + the browser's native `WebSocket` API)** — A persistent two-way connection between backend and frontend, so the dashboard shows events and verdicts *as they happen* during a run instead of the user having to refresh.
 
 ## The loop, in one sentence each
 
