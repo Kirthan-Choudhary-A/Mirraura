@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,8 +111,7 @@ func (m *DockerManager) RunSensor(ctx context.Context, containerID, samplePathIn
 func (m *DockerManager) Teardown(ctx context.Context, containerID, networkID string) error {
 	timeout := 5
 	_ = m.cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
-	if err := m.cli.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{Force: true}); err != nil {
-		return err
-	}
-	return m.cli.NetworkRemove(ctx, networkID)
+	removeErr := m.cli.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{Force: true})
+	networkErr := m.cli.NetworkRemove(ctx, networkID)
+	return errors.Join(removeErr, networkErr)
 }
