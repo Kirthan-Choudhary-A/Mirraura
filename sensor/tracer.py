@@ -10,6 +10,15 @@ import tempfile
 ROOT_EXECVE_RE = re.compile(r'^\d+\s+execve\(')
 
 
+def strip_root_execve(trace_text: str) -> str:
+    lines = trace_text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if ROOT_EXECVE_RE.match(line.strip()):
+            del lines[i]
+            break
+    return "".join(lines)
+
+
 def run_strace(sample_path: str, timeout: int = 15) -> str:
     fd, trace_path = tempfile.mkstemp(suffix=".trace")
     os.close(fd)
@@ -29,11 +38,7 @@ def run_strace(sample_path: str, timeout: int = 15) -> str:
             capture_output=True,
         )
         with open(trace_path) as f:
-            lines = f.readlines()
-        for i, line in enumerate(lines):
-            if ROOT_EXECVE_RE.match(line.strip()):
-                del lines[i]
-                break
-        return "".join(lines)
+            trace_text = f.read()
+        return strip_root_execve(trace_text)
     finally:
         os.remove(trace_path)
