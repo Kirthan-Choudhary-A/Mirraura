@@ -35,6 +35,7 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			return
 		}
 		defer file.Close()
+		safeFilename := filepath.Base(header.Filename)
 
 		data, err := io.ReadAll(file)
 		if err != nil {
@@ -44,7 +45,7 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 		sum := sha256.Sum256(data)
 		sampleHash := hex.EncodeToString(sum[:])
 
-		tmpPath := filepath.Join(os.TempDir(), header.Filename)
+		tmpPath := filepath.Join(os.TempDir(), safeFilename)
 		if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 			http.Error(w, "failed to stage upload", http.StatusInternalServerError)
 			return
@@ -60,19 +61,21 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			http.Error(w, fmt.Sprintf("network create failed: %v", err), http.StatusInternalServerError)
 			return
 		}
-		containerID, err := dm.StartShadowContainer(ctx, shadowImage, networkID, "mirraura-shadow-"+runID)
+		var containerID string
+		defer func() { dm.Teardown(context.Background(), containerID, networkID) }()
+
+		containerID, err = dm.StartShadowContainer(ctx, shadowImage, networkID, "mirraura-shadow-"+runID)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("container start failed: %v", err), http.StatusInternalServerError)
 			return
 		}
-		defer dm.Teardown(context.Background(), containerID, networkID)
 
 		if err := dm.CopyFileIntoContainer(ctx, containerID, tmpPath, "/samples/"); err != nil {
 			http.Error(w, fmt.Sprintf("copy into container failed: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		lines, err := dm.RunSensor(ctx, containerID, "/samples/"+header.Filename)
+		lines, err := dm.RunSensor(ctx, containerID, "/samples/"+safeFilename)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("sensor run failed: %v", err), http.StatusInternalServerError)
 			return
