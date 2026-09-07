@@ -1,0 +1,3 @@
+module mirraura/backend
+
+go 1.22
