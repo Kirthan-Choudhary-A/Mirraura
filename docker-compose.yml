@@ -1,3 +1,5 @@
+name: mirraura
+
 services:
   backend:
     build: ./backend
