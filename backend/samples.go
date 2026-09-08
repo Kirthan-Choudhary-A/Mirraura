@@ -18,6 +18,10 @@ import (
 
 const shadowImage = "mirraura-shadow:latest"
 
+// httpClient is shared by scoreWithVerdictEngine and logAction so a hung
+// verdict-engine call can't block Tick (and therefore the ticker) forever.
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
 func randomID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
@@ -110,7 +114,7 @@ func scoreWithVerdictEngine(baseURL, sampleHash string, events []json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.Post(baseURL+"/score", "application/json", bytes.NewReader(body))
+	resp, err := httpClient.Post(baseURL+"/score", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

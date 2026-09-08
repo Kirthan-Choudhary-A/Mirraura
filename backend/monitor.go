@@ -26,6 +26,7 @@ type monitorDocker interface {
 	RunPoller(ctx context.Context, containerID string) (<-chan string, error)
 	IsolateContainer(ctx context.Context, networkName, containerName string) error
 	ReconnectContainer(ctx context.Context, networkName, containerName string) error
+	IsContainerIsolated(ctx context.Context, networkName, containerName string) (bool, error)
 }
 
 type Monitor struct {
@@ -45,6 +46,21 @@ func (mon *Monitor) IsIsolated() bool {
 	mon.mu.Lock()
 	defer mon.mu.Unlock()
 	return mon.isolated
+}
+
+// InitIsolatedState recovers the isolated flag from Docker's actual network
+// attachment state, so a backend restart doesn't forget that the monitored
+// container is genuinely disconnected. Falls back to isolated=false (logging
+// the error) if the inspect call fails, e.g. the container doesn't exist yet.
+func (mon *Monitor) InitIsolatedState(ctx context.Context) {
+	isolated, err := mon.dm.IsContainerIsolated(ctx, monitorNetworkName, monitorContainerName)
+	if err != nil {
+		log.Printf("monitor: failed to inspect container isolation state at startup, defaulting to not isolated: %v", err)
+		return
+	}
+	mon.mu.Lock()
+	mon.isolated = isolated
+	mon.mu.Unlock()
 }
 
 func (mon *Monitor) Tick(ctx context.Context) error {
@@ -131,7 +147,7 @@ func logAction(baseURL, action, deviceID string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.Post(baseURL+"/audit/action", "application/json", bytes.NewReader(body))
+	resp, err := httpClient.Post(baseURL+"/audit/action", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

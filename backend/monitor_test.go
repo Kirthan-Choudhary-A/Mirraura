@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +16,8 @@ type fakeMonitorDocker struct {
 	reconnectCalls int
 	isolateErr     error
 	reconnectErr   error
+	isIsolatedVal  bool
+	isIsolatedErr  error
 }
 
 func (f *fakeMonitorDocker) RunPoller(ctx context.Context, containerID string) (<-chan string, error) {
@@ -37,6 +40,10 @@ func (f *fakeMonitorDocker) IsolateContainer(ctx context.Context, networkName, c
 func (f *fakeMonitorDocker) ReconnectContainer(ctx context.Context, networkName, containerName string) error {
 	f.reconnectCalls++
 	return f.reconnectErr
+}
+
+func (f *fakeMonitorDocker) IsContainerIsolated(ctx context.Context, networkName, containerName string) (bool, error) {
+	return f.isIsolatedVal, f.isIsolatedErr
 }
 
 func fakeVerdictEngine(t *testing.T, verdictLabel string) *httptest.Server {
@@ -100,6 +107,24 @@ func TestReconnectFailsWhenNotIsolated(t *testing.T) {
 	mon := NewMonitor(fd, "http://unused", &fakeBroadcaster{})
 	if err := mon.Reconnect(context.Background()); err != errNotIsolated {
 		t.Fatalf("expected errNotIsolated, got %v", err)
+	}
+}
+
+func TestInitIsolatedStateRecoversFromDocker(t *testing.T) {
+	fd := &fakeMonitorDocker{isIsolatedVal: true}
+	mon := NewMonitor(fd, "http://unused", &fakeBroadcaster{})
+	mon.InitIsolatedState(context.Background())
+	if !mon.IsIsolated() {
+		t.Fatal("expected isolated flag to be recovered as true from Docker's actual state")
+	}
+}
+
+func TestInitIsolatedStateDefaultsFalseOnInspectError(t *testing.T) {
+	fd := &fakeMonitorDocker{isIsolatedErr: errors.New("no such container")}
+	mon := NewMonitor(fd, "http://unused", &fakeBroadcaster{})
+	mon.InitIsolatedState(context.Background())
+	if mon.IsIsolated() {
+		t.Fatal("expected isolated flag to default false when inspect fails")
 	}
 }
 

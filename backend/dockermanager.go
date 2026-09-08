@@ -124,6 +124,18 @@ func (m *DockerManager) ReconnectContainer(ctx context.Context, networkName, con
 	return m.cli.NetworkConnect(ctx, networkName, containerName, nil)
 }
 
+// IsContainerIsolated reports whether containerName is currently NOT attached
+// to networkName, i.e. Docker's ground truth for isolation state. Used at
+// startup to recover the in-memory isolated flag after a backend restart.
+func (m *DockerManager) IsContainerIsolated(ctx context.Context, networkName, containerName string) (bool, error) {
+	inspect, err := m.cli.ContainerInspect(ctx, containerName)
+	if err != nil {
+		return false, err
+	}
+	_, attached := inspect.NetworkSettings.Networks[networkName]
+	return !attached, nil
+}
+
 func (m *DockerManager) Teardown(ctx context.Context, containerID, networkID string) error {
 	timeout := 5
 	_ = m.cli.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
