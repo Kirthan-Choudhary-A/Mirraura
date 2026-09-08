@@ -11,6 +11,10 @@ STATE_PATH = Path("/var/run/poller_state.json")
 DEVICE_ID = "monitored-endpoint"
 
 
+# ponytail: names-only, top-level-only /etc listing — detects new files, not
+# modifications to existing ones (e.g. /etc/passwd being edited) and not
+# anything nested in a subdirectory (e.g. /etc/cron.d/evil). Upgrade path:
+# track mtime/size per file, or walk recursively, if that gap matters later.
 def snapshot_dir(path: str = "/etc") -> list:
     try:
         return sorted(os.listdir(path))
@@ -32,8 +36,11 @@ def capture_snapshot() -> dict:
 
 def load_previous() -> dict:
     if STATE_PATH.exists():
-        return json.loads(STATE_PATH.read_text())
-    return {"processes": {}, "connections": {}}
+        try:
+            return json.loads(STATE_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {"processes": {}, "connections": {}, "files": []}
 
 
 def save_current(snapshot: dict) -> None:
