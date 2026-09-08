@@ -8,14 +8,17 @@ Plain-English notes on every concept and technology used, so you can explain the
 
 Mirraura is a security-research project: a **shadow honeypot** that detonates an untrusted uploaded file inside a throwaway Docker container (instead of the real device), watches what it does, and scores the behavior with a confidence level and a plain-English explanation — not just a yes/no.
 
+Mirraura actually ships **two** independent detection paths that both feed the same verdict engine: the upload-triggered shadow honeypot described above, and an always-on continuous-monitoring path (see "Continuous behavioral monitoring — concepts" below) that watches a persistent container the whole time it's running, not just at a single upload moment.
+
 **Current architecture:**
-- A **Go** backend orchestrates the Docker lifecycle (spin up a network + container per upload, run the sample, tear down) and exposes the API/WebSocket the frontend talks to.
-- A **Python** verdict engine (FastAPI) does the actual scoring: a known-bad hash lookup plus a weighted rule-based behavioral scorer, and owns the tamper-evident audit log.
+- A **Go** backend orchestrates the Docker lifecycle (spin up a network + container per upload, run the sample, tear down) and exposes the API/WebSocket the frontend talks to. It also runs a second, independent path: a background ticker that polls a persistent `mirraura-monitored-endpoint` container every 10 seconds, scores what it finds with the same verdict engine, and — on a `Compromised` verdict — disconnects that container from its network for real (containment), with reconnection only ever triggered by a human via the dashboard.
+- A **Python** verdict engine (FastAPI) does the actual scoring: a known-bad hash lookup plus a weighted rule-based behavioral scorer, and owns the tamper-evident audit log. It scores both paths identically — it has no idea whether a batch of events came from a one-shot upload or a continuous-monitoring poll cycle.
 - A **Python** sensor runs inside the shadow container, traces the sample's syscalls via `strace`, and reports what it saw in a common event format.
-- A **React + TypeScript** dashboard shows the live event feed, the verdict, and the audit log in real time.
+- A **Python** poller (`monitored-endpoint/poller.py`) runs inside the always-on monitored container, snapshotting processes/connections/files every cycle and diffing against the previous cycle to find what's new — see "Continuous behavioral monitoring" below for why this is a different capture mechanism than `strace`.
+- A **React + TypeScript** dashboard shows the live event feed, the verdict, and the audit log in real time, plus an isolation banner and a "Reconnect" control for the continuous-monitoring path.
 - Everything ships as one **Docker Compose** stack (`docker compose up --build`) so it runs identically on any teammate's machine.
 
-See "The loop, in one sentence each" at the bottom of this file for the full request-to-verdict walkthrough, and the design spec (`docs/superpowers/specs/2026-09-07-mirraura-design.md`) for the complete requirements this was built against.
+See "The loop, in one sentence each" and "The continuous-monitoring loop, in one sentence each" at the bottom of this file for the two request-to-verdict walkthroughs, and the design spec (`docs/superpowers/specs/2026-09-07-mirraura-design.md`) for the complete requirements this was built against.
 
 ## Core security concepts
 
@@ -45,8 +48,14 @@ See "The loop, in one sentence each" at the bottom of this file for the full req
 **Continuous behavioral monitoring** — Not everything a system does happens at a single, clearly-marked "download" moment — a device can also just start acting strangely on its own (a background process that shouldn't be there, an unexpected outbound connection). A continuous monitoring layer doesn't wait for a trigger; it watches a device the whole time it's running and feeds what it sees into the *same* verdict engine that scores uploaded files. This closes the gap between "we checked this one file" and "we know this device is still behaving normally."
 *In Mirraura:* a persistent `mirraura-monitored-endpoint` container stands in for "the real device," polled every 10 seconds, scored by the exact same rule-based scorer the shadow node already uses — no new scoring logic, just a new source of events.
 
-**Poll-and-diff (snapshot diffing)** — Instead of tracing every syscall in real time (expensive, and complex to set up correctly for a long-running, ever-changing set of processes), you take a snapshot of what's running/connected *right now*, compare it to the previous snapshot, and only report what's genuinely *new*. It's a much lighter-weight way to notice change over time — the same principle a lot of real monitoring agents use (poll every N seconds, diff, alert on the delta) instead of instrumenting everything continuously.
-*In Mirraura:* `poller.py` runs `ps`/`ss` inside the monitored container every cycle, diffs against the previous cycle's saved state file, and emits a canonical event only for the new processes/connections. A quiet cycle with nothing new produces zero events — and zero events means the cycle is skipped entirely rather than manufacturing a hollow "Inconclusive" verdict every 10 seconds.
+**Poll-and-diff (snapshot diffing)** — Instead of tracing every syscall in real time (expensive, and complex to set up correctly for a long-running, ever-changing set of processes), you take a snapshot of what's running/connected/present *right now*, compare it to the previous snapshot, and only report what's genuinely *new*. It's a much lighter-weight way to notice change over time — the same principle a lot of real monitoring agents use (poll every N seconds, diff, alert on the delta) instead of instrumenting everything continuously.
+*In Mirraura:* `poller.py` watches **three** things every cycle inside the monitored container — processes (`ps`), network connections (`ss`), and new top-level files under `/etc` (a plain `os.listdir`) — diffs each against the previous cycle's saved state file, and emits a canonical event only for what's new. This third leg matters more than it looks: the verdict engine's `sensitive_write` and `rapid_file_changes` rules are what make a `Compromised` verdict (and therefore real network isolation) reachable from continuous monitoring at all — a run that only ever reports new processes/connections can climb into `Suspicious` territory but not past it. A quiet cycle with nothing new produces zero events — and zero events means the cycle is skipped entirely rather than manufacturing a hollow "Inconclusive" verdict every 10 seconds.
+
+**Cold-start baseline** — The very first poll after a monitored container starts up has no "previous snapshot" to diff against — every process, connection, and file that's already there (init, the shell, whatever the base image ships with) would otherwise look indistinguishable from something that just appeared. Reporting all of that as "new" on cycle one would trip the scorer into an immediate, spurious `Compromised`/isolation before the device has done anything at all.
+*In Mirraura:* `poller.py` detects the first run (no saved state file yet), saves that first snapshot as the baseline, and returns without emitting any events or scoring anything. Diffing — and therefore detection — only starts from the *second* poll cycle onward, once there's something real to compare against.
+
+**Self-process exclusion** — A poller that watches "what processes are running" will, by definition, see itself: its own `python3` interpreter plus the `ps`/`ss` subprocesses it shells out to each cycle. Without filtering those out, every single poll cycle would report its own toolchain as "newly spawned processes," permanently drowning real signal in self-generated noise.
+*In Mirraura:* `differ.py`'s `POLLER_OWN_PROCESSES` set (`python3`, `ps`, `ss`) excludes those names from the diff by name. It's a deliberately cheap approach with a named ceiling (see the `ponytail:` comment above it in `differ.py`) — an attacker-spawned process that happens to share one of those names would also be silently excluded — but for this build, filtering by name is enough to keep the poller from talking about itself.
 
 **Containment / network isolation** — Detecting a compromise is only half the point; the other half is stopping it from spreading before a human even looks at it. Network isolation means cutting the suspicious device's route to everything else on the network — but you (the operator) don't lose the ability to inspect it, because inspection tooling can go through a separate management channel instead of the device's own network path.
 *In Mirraura:* on a `Compromised` verdict, the backend disconnects the monitored container from its dedicated Docker network via the Docker API — real containment, not just a dashboard warning. `docker exec` still works on the isolated container afterward, since exec goes through the Docker daemon's socket, not the container's own (now-cut) network interface — so monitoring continues even while the device is contained.
@@ -101,3 +110,17 @@ See "The loop, in one sentence each" at the bottom of this file for the full req
 7. **Record** — the verdict is appended to a hash-chained audit log, so it can't be silently altered later.
 8. **Show** — the frontend displays the live event feed, the verdict, and the audit log.
 9. **Teardown** — the shadow container and network are destroyed.
+
+This is the upload-triggered path specifically. A second, independent loop — continuous monitoring — runs the whole time the stack is up, whether or not anyone ever uploads a file. It's covered separately below since it's a different trigger, a different capture mechanism, and a different (real, not throwaway) container.
+
+## The continuous-monitoring loop, in one sentence each
+
+1. **Stand up** — a persistent `mirraura-monitored-endpoint` container runs the whole time the stack is up, standing in for "the real device."
+2. **Tick** — every 10 seconds, the Go backend's ticker calls into the container to run one poll cycle.
+3. **Baseline or diff** — the poller snapshots processes/connections/`/etc` files; on the very first cycle it just saves that as the baseline, otherwise it diffs against the previous cycle's saved snapshot.
+4. **Emit** — genuinely new processes, connections, or files become canonical events, with the poller's own toolchain filtered out.
+5. **Skip if quiet** — a cycle with zero new events is dropped without scoring anything, since silence is the expected steady state here.
+6. **Score** — a non-empty batch is content-addressed (SHA-256 of the event batch) and scored by the exact same verdict engine and rule set the shadow-honeypot path uses.
+7. **Contain, if warranted** — a `Compromised` verdict disconnects the monitored container from its Docker network via the Docker API, a real containment action, not just a dashboard warning.
+8. **Show** — the frontend shows the live event feed, the verdict, and an isolation banner when the container is cut off.
+9. **Recover, on human say-so** — nothing reconnects the container automatically; only a person clicking "Reconnect" on the dashboard does, and both the isolate and reconnect actions are written to the same tamper-evident audit log as every verdict.
