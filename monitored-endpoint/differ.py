@@ -54,8 +54,8 @@ def diff_snapshots(prev: dict, curr: dict) -> List[dict]:
             }
         )
 
-    prev_files = set(prev.get("files", []))
-    curr_files = set(curr.get("files", []))
+    prev_files = parse_dir_listing(prev.get("files", []))
+    curr_files = parse_dir_listing(curr.get("files", []))
     for name in sorted(curr_files - prev_files):
         events.append(
             {
