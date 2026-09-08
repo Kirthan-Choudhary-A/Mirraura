@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
 func main() {
@@ -17,6 +19,7 @@ func main() {
 		log.Fatal(err)
 	}
 	hub := NewHub()
+	mon := NewMonitor(dm, verdictEngineURL, hub)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)
@@ -24,6 +27,20 @@ func main() {
 	mux.HandleFunc("/api/verdicts", verdictsListHandler(verdictEngineURL))
 	mux.HandleFunc("/api/verdicts/", verdictDetailHandler(verdictEngineURL))
 	mux.HandleFunc("/api/live", hub.HandleWS)
+	mux.HandleFunc("/api/monitor/status", monitorStatusHandler(mon))
+	mux.HandleFunc("/api/monitor/reconnect", monitorReconnectHandler(mon))
+
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := mon.Tick(ctx); err != nil {
+				log.Printf("monitor tick failed: %v", err)
+			}
+			cancel()
+		}
+	}()
 
 	port := os.Getenv("BACKEND_PORT")
 	if port == "" {
