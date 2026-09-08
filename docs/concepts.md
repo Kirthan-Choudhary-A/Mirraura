@@ -40,6 +40,23 @@ See "The loop, in one sentence each" at the bottom of this file for the full req
 
 **Re-validation loop** (phase 2) — After updating the scorer/model, you replay old recorded runs through it and check whether it now catches things it used to miss. That before/after comparison ("X% of previously-missed samples now detected") is a concrete, demoable improvement metric.
 
+## Continuous behavioral monitoring — concepts (Sub-project 2, item 1)
+
+**Continuous behavioral monitoring** — Not everything a system does happens at a single, clearly-marked "download" moment — a device can also just start acting strangely on its own (a background process that shouldn't be there, an unexpected outbound connection). A continuous monitoring layer doesn't wait for a trigger; it watches a device the whole time it's running and feeds what it sees into the *same* verdict engine that scores uploaded files. This closes the gap between "we checked this one file" and "we know this device is still behaving normally."
+*In Mirraura:* a persistent `mirraura-monitored-endpoint` container stands in for "the real device," polled every 10 seconds, scored by the exact same rule-based scorer the shadow node already uses — no new scoring logic, just a new source of events.
+
+**Poll-and-diff (snapshot diffing)** — Instead of tracing every syscall in real time (expensive, and complex to set up correctly for a long-running, ever-changing set of processes), you take a snapshot of what's running/connected *right now*, compare it to the previous snapshot, and only report what's genuinely *new*. It's a much lighter-weight way to notice change over time — the same principle a lot of real monitoring agents use (poll every N seconds, diff, alert on the delta) instead of instrumenting everything continuously.
+*In Mirraura:* `poller.py` runs `ps`/`ss` inside the monitored container every cycle, diffs against the previous cycle's saved state file, and emits a canonical event only for the new processes/connections. A quiet cycle with nothing new produces zero events — and zero events means the cycle is skipped entirely rather than manufacturing a hollow "Inconclusive" verdict every 10 seconds.
+
+**Containment / network isolation** — Detecting a compromise is only half the point; the other half is stopping it from spreading before a human even looks at it. Network isolation means cutting the suspicious device's route to everything else on the network — but you (the operator) don't lose the ability to inspect it, because inspection tooling can go through a separate management channel instead of the device's own network path.
+*In Mirraura:* on a `Compromised` verdict, the backend disconnects the monitored container from its dedicated Docker network via the Docker API — real containment, not just a dashboard warning. `docker exec` still works on the isolated container afterward, since exec goes through the Docker daemon's socket, not the container's own (now-cut) network interface — so monitoring continues even while the device is contained.
+
+**Human-triggered recovery (no auto-reconnect)** — Any system that can automatically lock something down needs an equally deliberate way to undo it — otherwise one false positive permanently breaks the thing you were protecting. The fix isn't to make containment less aggressive; it's to make *un*-containing something require a human decision every single time, with nothing — no timer, no automatic condition — that reverses it on its own.
+*In Mirraura:* the only way an isolated container gets reconnected is a person clicking "Reconnect" on the dashboard, which calls `POST /api/monitor/reconnect`. Both the isolate action and the reconnect action get written to the same tamper-evident audit log as every other verdict — the containment decision is as accountable as the detection that triggered it.
+
+**Content-addressed identity for non-file inputs** — Content-addressed hashing (already used for uploaded files) normally means "hash the file's bytes" so identical content always gets the same identifier. Continuous monitoring doesn't have a single file to hash — it has a batch of behavior events. Applying the same principle to *something else reproducible* (the event batch itself) keeps the "every judgment is content-addressed" property true even when there's no literal file involved.
+*In Mirraura:* each poll cycle's batch of new events is SHA-256 hashed, and that hash is passed to the verdict engine as `sample_hash` — same field, same meaning ("exactly what was judged"), just applied to a different kind of input than a file upload.
+
 ## Languages — what and why
 
 **Go (backend orchestrator, `backend/`)** — Genuinely good at exactly what the orchestrator needs: talking to the Docker API to spin up/tear down containers and networks, and handling many concurrent things (multiple runs, a live WebSocket feed to the frontend) without much ceremony. Compiles to a single binary — convenient for a demo, no runtime to install on the machine that runs it.
@@ -69,6 +86,9 @@ See "The loop, in one sentence each" at the bottom of this file for the full req
 **Vite + Vitest (frontend)** — Vite for a fast dev server and build (React + TypeScript template); Vitest (Vite-native test runner) for the one meaningful frontend unit test (the API client's request/response shapes) — no separate test-runner config needed since it shares Vite's setup.
 
 **WebSocket (protocol, used by gorilla/websocket + the browser's native `WebSocket` API)** — A persistent two-way connection between backend and frontend, so the dashboard shows events and verdicts *as they happen* during a run instead of the user having to refresh.
+
+**procps (`ps`) / iproute2 (`ss`) (continuous monitoring, inside `monitored-endpoint`)** — Standard Linux utilities for listing running processes and open network connections/sockets, respectively. Present in essentially every Linux distribution already — no custom monitoring agent needed, just shell out to tools that already know how to answer "what's running right now" and "what's connected right now."
+*In Mirraura:* `poller.py` runs both once per poll cycle and diffs their output against the previous cycle's saved snapshot to find what's new — this is the whole capture mechanism for continuous monitoring, deliberately simpler than the shadow node's `strace`-based tracing since there's no single command to trace here, just an always-running device to watch.
 
 ## The loop, in one sentence each
 
