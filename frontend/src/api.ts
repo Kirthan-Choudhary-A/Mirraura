@@ -15,9 +15,21 @@ export async function fetchVerdicts(): Promise<Verdict[]> {
   return res.json();
 }
 
+export async function fetchMonitorStatus(): Promise<{ isolated: boolean }> {
+  const res = await fetch(`${BASE}/api/monitor/status`);
+  return res.json();
+}
+
+export async function reconnectMonitor(): Promise<void> {
+  const res = await fetch(`${BASE}/api/monitor/reconnect`, { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+}
+
 export type LiveMessage =
   | { type: "event"; data: MirraEvent }
-  | { type: "verdict"; data: Verdict };
+  | { type: "verdict"; data: Verdict }
+  | { type: "isolated" }
+  | { type: "reconnected" };
 
 export function connectLive(onMessage: (msg: LiveMessage) => void): WebSocket {
   const wsUrl = BASE.replace(/^http/, "ws") + "/api/live";
