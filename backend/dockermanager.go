@@ -78,9 +78,9 @@ func (m *DockerManager) CopyFileIntoContainer(ctx context.Context, containerID, 
 	return m.cli.CopyToContainer(ctx, containerID, destDir, &buf, types.CopyToContainerOptions{})
 }
 
-func (m *DockerManager) RunSensor(ctx context.Context, containerID, samplePathInContainer string) (<-chan string, error) {
+func (m *DockerManager) execAndStream(ctx context.Context, containerID string, cmd []string) (<-chan string, error) {
 	execID, err := m.cli.ContainerExecCreate(ctx, containerID, types.ExecConfig{
-		Cmd:          []string{"python3", "/sensor/sensor.py", samplePathInContainer},
+		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
@@ -106,6 +106,22 @@ func (m *DockerManager) RunSensor(ctx context.Context, containerID, samplePathIn
 		}
 	}()
 	return lines, nil
+}
+
+func (m *DockerManager) RunSensor(ctx context.Context, containerID, samplePathInContainer string) (<-chan string, error) {
+	return m.execAndStream(ctx, containerID, []string{"python3", "/sensor/sensor.py", samplePathInContainer})
+}
+
+func (m *DockerManager) RunPoller(ctx context.Context, containerID string) (<-chan string, error) {
+	return m.execAndStream(ctx, containerID, []string{"python3", "/poller/poller.py"})
+}
+
+func (m *DockerManager) IsolateContainer(ctx context.Context, networkName, containerName string) error {
+	return m.cli.NetworkDisconnect(ctx, networkName, containerName, false)
+}
+
+func (m *DockerManager) ReconnectContainer(ctx context.Context, networkName, containerName string) error {
+	return m.cli.NetworkConnect(ctx, networkName, containerName, nil)
 }
 
 func (m *DockerManager) Teardown(ctx context.Context, containerID, networkID string) error {
