@@ -71,3 +71,19 @@ def test_new_file_in_etc_detected():
 def test_no_new_files_produces_no_file_events():
     snap = {"processes": {}, "connections": {}, "files": ["hostname"]}
     assert diff_snapshots(snap, snap) == []
+
+
+def test_pollers_own_processes_excluded_from_diff():
+    prev = {"processes": {}, "connections": {}, "files": []}
+    curr = {
+        "processes": {"10": "python3", "11": "ps", "12": "ss", "13": "touch"},
+        "connections": {},
+        "files": [],
+    }
+    events = diff_snapshots(prev, curr)
+    assert events == [
+        {
+            "event_type": "process_spawn",
+            "process_ref": {"pid": 13, "name": "touch", "parent_pid": 0},
+        }
+    ]

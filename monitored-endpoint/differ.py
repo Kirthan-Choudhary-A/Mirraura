@@ -1,5 +1,13 @@
 from typing import Dict, List
 
+# ponytail: name-based exclusion of the poller's own toolchain (python3, ps, ss)
+# so its own per-cycle subprocess spawns aren't misread as suspicious activity.
+# Ceiling: an attacker-spawned python3/ps/ss inside the monitored container would
+# also be silently excluded. Upgrade path: track the poller's own subprocess PID
+# tree (e.g. via os.getpid()/psutil children) instead of matching by name, if
+# that gap ever matters for a real deployment.
+POLLER_OWN_PROCESSES = {"python3", "ps", "ss"}
+
 
 def parse_ps_output(text: str) -> Dict[str, str]:
     result: Dict[str, str] = {}
@@ -37,10 +45,13 @@ def diff_snapshots(prev: dict, curr: dict) -> List[dict]:
     prev_procs = prev.get("processes", {})
     curr_procs = curr.get("processes", {})
     for pid in sorted(set(curr_procs) - set(prev_procs)):
+        name = curr_procs[pid]
+        if name in POLLER_OWN_PROCESSES:
+            continue
         events.append(
             {
                 "event_type": "process_spawn",
-                "process_ref": {"pid": int(pid), "name": curr_procs[pid], "parent_pid": 0},
+                "process_ref": {"pid": int(pid), "name": name, "parent_pid": 0},
             }
         )
 
