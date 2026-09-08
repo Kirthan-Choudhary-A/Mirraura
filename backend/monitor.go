@@ -88,16 +88,14 @@ func (mon *Monitor) Tick(ctx context.Context) error {
 	}
 
 	mon.mu.Lock()
-	alreadyIsolated := mon.isolated
-	mon.mu.Unlock()
-	if alreadyIsolated {
+	if mon.isolated {
+		mon.mu.Unlock()
 		return nil
 	}
-
 	if err := mon.dm.IsolateContainer(ctx, monitorNetworkName, monitorContainerName); err != nil {
+		mon.mu.Unlock()
 		return fmt.Errorf("isolate failed: %w", err)
 	}
-	mon.mu.Lock()
 	mon.isolated = true
 	mon.mu.Unlock()
 	mon.hub.Broadcast(map[string]any{"type": "isolated"})
