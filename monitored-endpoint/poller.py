@@ -41,10 +41,16 @@ def save_current(snapshot: dict) -> None:
 
 
 def main() -> None:
-    prev = load_previous()
+    is_first_run = not STATE_PATH.exists()
     curr = capture_snapshot()
-    raw_events = diff_snapshots(prev, curr)
+
+    if is_first_run:
+        save_current(curr)
+        return
+
+    prev = load_previous()
     save_current(curr)
+    raw_events = diff_snapshots(prev, curr)
 
     for raw in raw_events:
         event = {
