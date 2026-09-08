@@ -18,12 +18,12 @@ def test_parse_ss_output_only_established():
 
 
 def test_no_new_processes_or_connections():
-    snap = {"processes": {"1": "init"}, "connections": {}}
+    snap = {"processes": {"1": "init"}, "connections": {}, "files": []}
     assert diff_snapshots(snap, snap) == []
 
 
 def test_empty_snapshots_produce_no_events():
-    empty = {"processes": {}, "connections": {}}
+    empty = {"processes": {}, "connections": {}, "files": []}
     assert diff_snapshots(empty, empty) == []
 
 
@@ -54,3 +54,20 @@ def test_new_connection_detected():
             "network_ref": {"dst_ip": "93.184.216.34", "dst_port": 80, "protocol": "tcp"},
         }
     ]
+
+
+def test_new_file_in_etc_detected():
+    prev = {"processes": {}, "connections": {}, "files": ["hostname"]}
+    curr = {"processes": {}, "connections": {}, "files": ["hostname", "mirraura-test-marker"]}
+    events = diff_snapshots(prev, curr)
+    assert events == [
+        {
+            "event_type": "file_write",
+            "file_ref": {"path": "/etc/mirraura-test-marker", "action": "write"},
+        }
+    ]
+
+
+def test_no_new_files_produces_no_file_events():
+    snap = {"processes": {}, "connections": {}, "files": ["hostname"]}
+    assert diff_snapshots(snap, snap) == []

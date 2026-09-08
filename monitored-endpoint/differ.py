@@ -28,6 +28,10 @@ def parse_ss_output(text: str) -> Dict[str, dict]:
     return result
 
 
+def parse_dir_listing(names: list) -> set:
+    return set(names)
+
+
 def diff_snapshots(prev: dict, curr: dict) -> List[dict]:
     events: List[dict] = []
     prev_procs = prev.get("processes", {})
@@ -47,6 +51,16 @@ def diff_snapshots(prev: dict, curr: dict) -> List[dict]:
             {
                 "event_type": "network_connect",
                 "network_ref": curr_conns[key],
+            }
+        )
+
+    prev_files = set(prev.get("files", []))
+    curr_files = set(curr.get("files", []))
+    for name in sorted(curr_files - prev_files):
+        events.append(
+            {
+                "event_type": "file_write",
+                "file_ref": {"path": f"/etc/{name}", "action": "write"},
             }
         )
     return events

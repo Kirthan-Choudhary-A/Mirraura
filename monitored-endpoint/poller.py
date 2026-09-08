@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import uuid
 from datetime import datetime, timezone
@@ -10,6 +11,13 @@ STATE_PATH = Path("/var/run/poller_state.json")
 DEVICE_ID = "monitored-endpoint"
 
 
+def snapshot_dir(path: str = "/etc") -> list:
+    try:
+        return sorted(os.listdir(path))
+    except OSError:
+        return []
+
+
 def capture_snapshot() -> dict:
     ps_out = subprocess.run(
         ["ps", "-eo", "pid,comm"], capture_output=True, text=True
@@ -18,6 +26,7 @@ def capture_snapshot() -> dict:
     return {
         "processes": parse_ps_output(ps_out),
         "connections": parse_ss_output(ss_out),
+        "files": snapshot_dir(),
     }
 
 
