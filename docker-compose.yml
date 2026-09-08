@@ -31,5 +31,15 @@ services:
     depends_on:
       - backend
 
+  monitored-endpoint:
+    build: ./monitored-endpoint
+    container_name: mirraura-monitored-endpoint
+    networks:
+      - monitor-net
+
 volumes:
   audit-log-data:
+
+networks:
+  monitor-net:
+    name: mirraura-monitor-net
