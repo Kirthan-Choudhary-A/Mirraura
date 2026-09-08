@@ -58,3 +58,17 @@ def test_verdict_list_and_get_roundtrip():
 
     missing = client.get("/verdicts/does-not-exist")
     assert missing.status_code == 404
+
+
+def test_log_action_appends_to_audit_log():
+    resp = client.post("/audit/action", json={"action": "isolated", "device_id": "monitored-endpoint"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["action"] == "isolated"
+    assert body["device_id"] == "monitored-endpoint"
+
+    listed = client.get("/verdicts").json()
+    assert any(
+        r.get("action") == "isolated" and r.get("device_id") == "monitored-endpoint"
+        for r in listed
+    )

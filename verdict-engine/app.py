@@ -21,6 +21,11 @@ class ScoreRequest(BaseModel):
     events: List[Event] = []
 
 
+class ActionRequest(BaseModel):
+    action: str
+    device_id: str
+
+
 def _strip_entry_hash(record: dict) -> dict:
     return {k: v for k, v in record.items() if k != "entry_hash"}
 
@@ -66,3 +71,14 @@ def get_verdict(verdict_id: str):
     if not record:
         raise HTTPException(status_code=404, detail="verdict not found")
     return _strip_entry_hash(record)
+
+
+@app.post("/audit/action")
+def log_action(req: ActionRequest):
+    record = {
+        "record_id": str(uuid.uuid4()),
+        "device_id": req.device_id,
+        "action": req.action,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    return _strip_entry_hash(audit_log.append(record))
