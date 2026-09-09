@@ -1,3 +1,10 @@
 [
-  {"hash": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f", "label": "EICAR-Test-File"}
+  {
+    "hash": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
+    "label": "EICAR-Test-File",
+    "status": "approved",
+    "source": "manual",
+    "proposed_at": "2026-09-07T00:00:00+00:00",
+    "reviewed_at": "2026-09-07T00:00:00+00:00"
+  }
 ]
