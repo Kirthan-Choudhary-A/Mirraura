@@ -46,7 +46,8 @@ def _save_all(entries: List[dict]) -> None:
 
 
 def load_known_bad() -> Dict[str, str]:
-    return {e["hash"]: e["label"] for e in _load_all() if e.get("status") == "approved"}
+    with _LOCK:
+        return {e["hash"]: e["label"] for e in _load_all() if e.get("status") == "approved"}
 
 
 def check_hash(sample_hash: str, known_bad: Optional[Dict[str, str]] = None) -> Optional[str]:
