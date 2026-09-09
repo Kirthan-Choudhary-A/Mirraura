@@ -93,7 +93,7 @@ Migrating to a real database was discussed and explicitly deferred — not part 
 - `POST /hashes` with a hash that already exists under any status → `409` (no duplicate entries; if it's pending, they should approve/reject the existing one; if already decided, resubmitting is a no-op that would confuse the review history).
 - `POST /hashes/{hash}/approve` or `/reject` on an unknown hash → `404`.
 - `POST /hashes/{hash}/approve` or `/reject` on a hash not currently `pending` → `409` (no re-deciding an already-decided entry).
-- Audit-log write failure on approve/reject → logged, does not block the state transition (matches the existing isolate/reconnect pattern where audit logging is best-effort).
+- Audit-log write failure on approve/reject → propagates as a 500, same as the existing `score()` and `log_action` routes (both already call `audit_log.append()` in-process with no try/except). The isolate/reconnect best-effort pattern in `monitor.go`'s `logAction` doesn't apply here — that's a cross-process HTTP call from Go to the verdict-engine, a different and more failure-prone boundary than this feature's in-process `audit_log.append()` call, which is the same call `score()` already makes without a safety net.
 
 ## 8. Testing
 
