@@ -3,6 +3,7 @@ import { connectLive, fetchMonitorStatus } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
 import { EventFeed } from "./components/EventFeed";
 import { MonitorBanner } from "./components/MonitorBanner";
+import { PendingHashApprovals } from "./components/PendingHashApprovals";
 import { UploadPanel } from "./components/UploadPanel";
 import { VerdictPanel } from "./components/VerdictPanel";
 import type { MirraEvent, Verdict } from "./types";
@@ -19,7 +20,10 @@ function App() {
       .catch(() => {});
     const ws = connectLive((msg) => {
       if (msg.type === "event") setEvents((prev) => [...prev, msg.data]);
-      if (msg.type === "verdict") setVerdict(msg.data);
+      if (msg.type === "verdict") {
+        setVerdict(msg.data);
+        setRefreshKey((k) => k + 1);
+      }
       if (msg.type === "isolated") setIsolated(true);
       if (msg.type === "reconnected") setIsolated(false);
     });
@@ -45,6 +49,7 @@ function App() {
       <EventFeed events={events} />
       <VerdictPanel verdict={verdict} />
       <AuditLogTable refreshKey={refreshKey} />
+      <PendingHashApprovals refreshKey={refreshKey} />
     </div>
   );
 }

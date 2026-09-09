@@ -6,6 +6,7 @@ type AuditRow = Verdict & {
   action?: string;
   device_id?: string;
   record_id?: string;
+  hash?: string;
 };
 
 export function AuditLogTable({ refreshKey }: { refreshKey: number }) {
@@ -35,7 +36,15 @@ export function AuditLogTable({ refreshKey }: { refreshKey: number }) {
             return (
               <tr key={key}>
                 <td>{v.timestamp}</td>
-                <td>{v.action ? `device: ${v.device_id}` : `${v.sample_hash.slice(0, 12)}...`}</td>
+                <td>
+                  {v.action
+                    ? v.device_id
+                      ? `device: ${v.device_id}`
+                      : v.hash
+                        ? `hash: ${v.hash.slice(0, 12)}...`
+                        : "—"
+                    : `${v.sample_hash.slice(0, 12)}...`}
+                </td>
                 <td>{v.action ?? v.verdict}</td>
                 <td>{v.action ? "—" : v.confidence.toFixed(2)}</td>
               </tr>
