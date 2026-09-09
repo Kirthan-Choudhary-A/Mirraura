@@ -32,6 +32,8 @@ func main() {
 	mux.HandleFunc("/api/live", hub.HandleWS)
 	mux.HandleFunc("/api/monitor/status", monitorStatusHandler(mon))
 	mux.HandleFunc("/api/monitor/reconnect", monitorReconnectHandler(mon))
+	mux.HandleFunc("/api/hashes", hashesHandler(verdictEngineURL))
+	mux.HandleFunc("/api/hashes/", hashDecisionHandler(verdictEngineURL))
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
