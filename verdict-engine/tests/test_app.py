@@ -72,3 +72,118 @@ def test_log_action_appends_to_audit_log():
         r.get("action") == "isolated" and r.get("device_id") == "monitored-endpoint"
         for r in listed
     )
+
+
+def _compromised_events():
+    return [
+        {
+            "event_id": "e1",
+            "device_id": "shadow-node",
+            "event_type": "process_spawn",
+            "process_ref": {"pid": 100, "name": "sh", "parent_pid": 1},
+            "timestamp": "2026-09-09T00:00:00Z",
+            "baseline_deviation_score": 0.0,
+        },
+        {
+            "event_id": "e2",
+            "device_id": "shadow-node",
+            "event_type": "file_write",
+            "file_ref": {"path": "/etc/passwd", "action": "write"},
+            "timestamp": "2026-09-09T00:00:01Z",
+            "baseline_deviation_score": 0.0,
+        },
+        {
+            "event_id": "e3",
+            "device_id": "shadow-node",
+            "event_type": "network_connect",
+            "network_ref": {"dst_ip": "127.0.0.1", "dst_port": 31337, "protocol": "tcp"},
+            "timestamp": "2026-09-09T00:00:02Z",
+            "baseline_deviation_score": 0.0,
+        },
+    ]
+
+
+def test_behavioral_compromised_auto_proposes_pending_hash():
+    sample_hash = "c" * 64
+    resp = client.post("/score", json={"sample_hash": sample_hash, "events": _compromised_events()})
+    assert resp.json()["verdict"] == "Compromised"
+
+    hashes = client.get("/hashes").json()
+    matches = [h for h in hashes if h["hash"] == sample_hash]
+    assert len(matches) == 1
+    assert matches[0]["status"] == "pending"
+    assert matches[0]["source"] == "auto"
+
+
+def test_repeated_compromised_verdict_does_not_duplicate_proposal():
+    sample_hash = "d" * 64
+    client.post("/score", json={"sample_hash": sample_hash, "events": _compromised_events()})
+    client.post("/score", json={"sample_hash": sample_hash, "events": _compromised_events()})
+
+    hashes = client.get("/hashes").json()
+    matches = [h for h in hashes if h["hash"] == sample_hash]
+    assert len(matches) == 1
+
+
+def test_manual_hash_submission_then_approve_flow():
+    sample_hash = "1" * 64
+    resp = client.post("/hashes", json={"hash": sample_hash, "label": "manual-test"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+
+    # not yet approved: does not affect /score
+    score_resp = client.post("/score", json={"sample_hash": sample_hash, "events": []})
+    assert score_resp.json()["verdict"] == "Inconclusive"
+
+    approve_resp = client.post(f"/hashes/{sample_hash}/approve")
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["status"] == "approved"
+
+    score_resp2 = client.post("/score", json={"sample_hash": sample_hash, "events": []})
+    assert score_resp2.json()["verdict"] == "Compromised"
+
+    listed = client.get("/verdicts").json()
+    assert any(
+        r.get("action") == "hash_approved" and r.get("hash") == sample_hash for r in listed
+    )
+
+
+def test_manual_hash_submission_reject_flow():
+    sample_hash = "2" * 64
+    client.post("/hashes", json={"hash": sample_hash, "label": "reject-test"})
+    reject_resp = client.post(f"/hashes/{sample_hash}/reject")
+    assert reject_resp.status_code == 200
+    assert reject_resp.json()["status"] == "rejected"
+
+    score_resp = client.post("/score", json={"sample_hash": sample_hash, "events": []})
+    assert score_resp.json()["verdict"] == "Inconclusive"
+
+    listed = client.get("/verdicts").json()
+    assert any(
+        r.get("action") == "hash_rejected" and r.get("hash") == sample_hash for r in listed
+    )
+
+
+def test_submit_invalid_hash_format_rejected():
+    resp = client.post("/hashes", json={"hash": "not-a-hash", "label": "bad"})
+    assert resp.status_code == 400
+
+
+def test_submit_duplicate_hash_conflicts():
+    sample_hash = "3" * 64
+    client.post("/hashes", json={"hash": sample_hash, "label": "first"})
+    resp = client.post("/hashes", json={"hash": sample_hash, "label": "second"})
+    assert resp.status_code == 409
+
+
+def test_approve_unknown_hash_returns_404():
+    resp = client.post(f"/hashes/{'4' * 64}/approve")
+    assert resp.status_code == 404
+
+
+def test_approve_already_decided_hash_returns_409():
+    sample_hash = "5" * 64
+    client.post("/hashes", json={"hash": sample_hash, "label": "x"})
+    client.post(f"/hashes/{sample_hash}/approve")
+    resp = client.post(f"/hashes/{sample_hash}/approve")
+    assert resp.status_code == 409

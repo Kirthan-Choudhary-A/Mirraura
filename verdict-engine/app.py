@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -8,12 +9,23 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from audit_log import AuditLog
-from hash_lookup import check_hash
+from hash_lookup import (
+    HashExistsError,
+    HashNotFoundError,
+    HashNotPendingError,
+    approve_hash,
+    check_hash,
+    is_valid_hash,
+    list_hashes,
+    propose_hash,
+    reject_hash,
+)
 from rule_scorer import score_events, verdict_from_score
 from schemas import Event, Verdict
 
 app = FastAPI()
 audit_log = AuditLog(Path(os.getenv("AUDIT_LOG_PATH", "/data/audit_log.jsonl")))
+logger = logging.getLogger(__name__)
 
 
 class ScoreRequest(BaseModel):
@@ -24,6 +36,11 @@ class ScoreRequest(BaseModel):
 class ActionRequest(BaseModel):
     action: str
     device_id: str
+
+
+class HashSubmitRequest(BaseModel):
+    hash: str
+    label: str
 
 
 def _strip_entry_hash(record: dict) -> dict:
@@ -37,6 +54,7 @@ def health():
 
 @app.post("/score", response_model=Verdict)
 def score(req: ScoreRequest):
+    verdict_id = str(uuid.uuid4())
     known_bad_label = check_hash(req.sample_hash)
     if known_bad_label:
         verdict, confidence, chain = (
@@ -47,9 +65,22 @@ def score(req: ScoreRequest):
     else:
         confidence, chain = score_events(req.events)
         verdict = verdict_from_score(confidence, chain, had_telemetry=len(req.events) > 0)
+        if verdict == "Compromised":
+            try:
+                propose_hash(
+                    req.sample_hash,
+                    f"auto-proposed from verdict {verdict_id}",
+                    source="auto",
+                )
+            except HashExistsError:
+                pass
+            except Exception:
+                logger.warning(
+                    "failed to auto-propose hash for verdict %s", verdict_id, exc_info=True
+                )
 
     record = {
-        "verdict_id": str(uuid.uuid4()),
+        "verdict_id": verdict_id,
         "sample_hash": req.sample_hash,
         "verdict": verdict,
         "confidence": confidence,
@@ -82,3 +113,58 @@ def log_action(req: ActionRequest):
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     return _strip_entry_hash(audit_log.append(record))
+
+
+@app.get("/hashes")
+def list_hashes_route():
+    return list_hashes()
+
+
+@app.post("/hashes")
+def submit_hash_route(req: HashSubmitRequest):
+    if not is_valid_hash(req.hash):
+        raise HTTPException(status_code=400, detail="hash must be 64 lowercase hex characters")
+    try:
+        return propose_hash(req.hash, req.label, source="manual")
+    except HashExistsError:
+        raise HTTPException(status_code=409, detail="hash already exists")
+
+
+@app.post("/hashes/{hash}/approve")
+def approve_hash_route(hash: str):
+    try:
+        entry = approve_hash(hash)
+    except HashNotFoundError:
+        raise HTTPException(status_code=404, detail="hash not found")
+    except HashNotPendingError:
+        raise HTTPException(status_code=409, detail="hash is not pending")
+    audit_log.append(
+        {
+            "record_id": str(uuid.uuid4()),
+            "action": "hash_approved",
+            "hash": entry["hash"],
+            "label": entry["label"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    return entry
+
+
+@app.post("/hashes/{hash}/reject")
+def reject_hash_route(hash: str):
+    try:
+        entry = reject_hash(hash)
+    except HashNotFoundError:
+        raise HTTPException(status_code=404, detail="hash not found")
+    except HashNotPendingError:
+        raise HTTPException(status_code=409, detail="hash is not pending")
+    audit_log.append(
+        {
+            "record_id": str(uuid.uuid4()),
+            "action": "hash_rejected",
+            "hash": entry["hash"],
+            "label": entry["label"],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    return entry
