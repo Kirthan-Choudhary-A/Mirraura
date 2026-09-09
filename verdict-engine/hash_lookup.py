@@ -36,13 +36,24 @@ def is_valid_hash(value: str) -> bool:
 
 
 def _load_all() -> List[dict]:
+    # KNOWN_BAD_PATH normally points at a Docker volume so approve/reject
+    # decisions survive container recreate; seed it from the image's bundled
+    # copy the first time only, then never touch the seed again.
+    if not KNOWN_BAD_PATH.exists():
+        KNOWN_BAD_PATH.parent.mkdir(parents=True, exist_ok=True)
+        seed_path = Path(__file__).parent / "known_bad_hashes.json"
+        KNOWN_BAD_PATH.write_text(seed_path.read_text())
     with open(KNOWN_BAD_PATH) as f:
         return json.load(f)
 
 
 def _save_all(entries: List[dict]) -> None:
-    with open(KNOWN_BAD_PATH, "w") as f:
-        json.dump(entries, f, indent=2)
+    # Atomic: a kill mid-write must not leave a truncated file, which would make
+    # every later check_hash() (i.e. every /score) raise JSONDecodeError.
+    # os.replace (not os.rename) — atomic overwrite on Windows too.
+    tmp_path = KNOWN_BAD_PATH.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(entries, indent=2))
+    os.replace(tmp_path, KNOWN_BAD_PATH)
 
 
 def load_known_bad() -> Dict[str, str]:
@@ -61,6 +72,10 @@ def list_hashes() -> List[dict]:
 
 
 def propose_hash(sample_hash: str, label: str, source: str) -> dict:
+    # Validated here, not in the route: /score's auto-propose path is unauthenticated
+    # and would otherwise write arbitrary strings into the known-bad store.
+    if not is_valid_hash(sample_hash):
+        raise ValueError(f"not a valid sha256 hex hash: {sample_hash[:80]!r}")
     with _LOCK:
         entries = _load_all()
         if any(e["hash"] == sample_hash for e in entries):

@@ -8,7 +8,7 @@ import (
 
 func verdictsListHandler(verdictEngineURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		resp, err := http.Get(verdictEngineURL + "/verdicts")
+		resp, err := httpClient.Get(verdictEngineURL + "/verdicts")
 		if err != nil {
 			http.Error(w, "verdict-engine unreachable", http.StatusBadGateway)
 			return
@@ -23,7 +23,7 @@ func verdictsListHandler(verdictEngineURL string) http.HandlerFunc {
 func verdictDetailHandler(verdictEngineURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/verdicts/")
-		resp, err := http.Get(verdictEngineURL + "/verdicts/" + id)
+		resp, err := httpClient.Get(verdictEngineURL + "/verdicts/" + id)
 		if err != nil {
 			http.Error(w, "verdict-engine unreachable", http.StatusBadGateway)
 			return

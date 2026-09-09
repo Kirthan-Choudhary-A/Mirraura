@@ -17,8 +17,11 @@ export function PendingHashApprovals({
 
   function refetch() {
     fetchHashes()
-      .then(setEntries)
-      .catch(() => setEntries([]));
+      .then((entries) => {
+        setEntries(entries);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "failed to load pending hashes"));
   }
 
   useEffect(refetch, [refreshKey]);

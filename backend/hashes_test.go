@@ -89,3 +89,39 @@ func TestHashDecisionHandlerRejectsBadPath(t *testing.T) {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
+
+// Routes through a real ServeMux rather than calling the handlers directly, so
+// the exact-match-before-prefix registration ("/api/hashes" vs "/api/hashes/")
+// is itself under test — that routing decision is the Go/frontend seam.
+func TestHashRoutesRegisteredCorrectlyOnRealMux(t *testing.T) {
+	var gotPaths []string
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
+	}))
+	defer fakeEngine.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/hashes", hashesHandler(fakeEngine.URL))
+	mux.HandleFunc("/api/hashes/", hashDecisionHandler(fakeEngine.URL))
+
+	cases := []struct {
+		method, path, wantUpstream string
+	}{
+		{http.MethodGet, "/api/hashes", "GET /hashes"},
+		{http.MethodPost, "/api/hashes", "POST /hashes"},
+		{http.MethodPost, "/api/hashes/abc123/approve", "POST /hashes/abc123/approve"},
+		{http.MethodPost, "/api/hashes/abc123/reject", "POST /hashes/abc123/reject"},
+	}
+
+	for _, c := range cases {
+		gotPaths = nil
+		req := httptest.NewRequest(c.method, c.path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if len(gotPaths) != 1 || gotPaths[0] != c.wantUpstream {
+			t.Errorf("%s %s: expected upstream call %q, got %v", c.method, c.path, c.wantUpstream, gotPaths)
+		}
+	}
+}

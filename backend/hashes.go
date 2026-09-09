@@ -12,7 +12,7 @@ func hashesHandler(verdictEngineURL string) http.HandlerFunc {
 		var err error
 		switch r.Method {
 		case http.MethodGet:
-			resp, err = http.Get(verdictEngineURL + "/hashes")
+			resp, err = httpClient.Get(verdictEngineURL + "/hashes")
 		case http.MethodPost:
 			resp, err = httpClient.Post(verdictEngineURL+"/hashes", "application/json", r.Body)
 		default:

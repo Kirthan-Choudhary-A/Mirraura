@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 class ScoreRequest(BaseModel):
     sample_hash: str
     events: List[Event] = []
+    # "sample" = uploaded file (sample_hash is a real file identity, eligible for
+    # auto-propose); "monitor" = continuous-monitoring event batch (the hash is of
+    # a JSON event array, would never match a future upload).
+    source: str = "sample"
 
 
 class ActionRequest(BaseModel):
@@ -65,7 +69,7 @@ def score(req: ScoreRequest):
     else:
         confidence, chain = score_events(req.events)
         verdict = verdict_from_score(confidence, chain, had_telemetry=len(req.events) > 0)
-        if verdict == "Compromised":
+        if verdict == "Compromised" and req.source == "sample":
             try:
                 propose_hash(
                     req.sample_hash,

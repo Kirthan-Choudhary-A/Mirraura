@@ -97,7 +97,7 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			events = append(events, raw)
 		}
 
-		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, events)
+		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, "sample", events)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("scoring failed: %v", err), http.StatusInternalServerError)
 			return
@@ -109,8 +109,8 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 	}
 }
 
-func scoreWithVerdictEngine(baseURL, sampleHash string, events []json.RawMessage) (*Verdict, error) {
-	body, err := json.Marshal(map[string]any{"sample_hash": sampleHash, "events": events})
+func scoreWithVerdictEngine(baseURL, sampleHash, source string, events []json.RawMessage) (*Verdict, error) {
+	body, err := json.Marshal(map[string]any{"sample_hash": sampleHash, "events": events, "source": source})
 	if err != nil {
 		return nil, err
 	}

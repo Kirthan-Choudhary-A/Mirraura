@@ -32,7 +32,7 @@ func TestScoreWithVerdictEngine(t *testing.T) {
 	}))
 	defer fakeEngine.Close()
 
-	v, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", nil)
+	v, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "sample", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
