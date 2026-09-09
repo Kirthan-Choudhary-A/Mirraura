@@ -20,7 +20,9 @@ func main() {
 	}
 	hub := NewHub()
 	mon := NewMonitor(dm, verdictEngineURL, hub)
-	mon.InitIsolatedState(context.Background())
+	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	mon.InitIsolatedState(initCtx)
+	initCancel()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)

@@ -34,13 +34,16 @@ def capture_snapshot() -> dict:
     }
 
 
-def load_previous() -> dict:
+def load_previous() -> tuple[dict, bool]:
+    """Returns (previous_snapshot, was_valid). was_valid is False for a
+    missing or corrupted state file, so main() can re-baseline instead of
+    diffing against a synthetic empty snapshot."""
     if STATE_PATH.exists():
         try:
-            return json.loads(STATE_PATH.read_text())
+            return json.loads(STATE_PATH.read_text()), True
         except (OSError, json.JSONDecodeError):
             pass
-    return {"processes": {}, "connections": {}, "files": []}
+    return {"processes": {}, "connections": {}, "files": []}, False
 
 
 def save_current(snapshot: dict) -> None:
@@ -48,15 +51,13 @@ def save_current(snapshot: dict) -> None:
 
 
 def main() -> None:
-    is_first_run = not STATE_PATH.exists()
     curr = capture_snapshot()
+    prev, was_valid = load_previous()
+    save_current(curr)
 
-    if is_first_run:
-        save_current(curr)
+    if not was_valid:
         return
 
-    prev = load_previous()
-    save_current(curr)
     raw_events = diff_snapshots(prev, curr)
 
     for raw in raw_events:
