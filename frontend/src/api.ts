@@ -36,6 +36,7 @@ export async function reconnectMonitor(): Promise<void> {
 
 export async function fetchHashes(): Promise<HashEntry[]> {
   const res = await fetch(`${BASE}/api/hashes`);
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 

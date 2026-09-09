@@ -49,7 +49,10 @@ function App() {
       <EventFeed events={events} />
       <VerdictPanel verdict={verdict} />
       <AuditLogTable refreshKey={refreshKey} />
-      <PendingHashApprovals refreshKey={refreshKey} />
+      <PendingHashApprovals
+        refreshKey={refreshKey}
+        onDecision={() => setRefreshKey((k) => k + 1)}
+      />
     </div>
   );
 }

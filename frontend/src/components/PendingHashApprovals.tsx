@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import { approveHash, fetchHashes, rejectHash, submitHash } from "../api";
 import type { HashEntry } from "../api";
 
-export function PendingHashApprovals({ refreshKey }: { refreshKey: number }) {
+export function PendingHashApprovals({
+  refreshKey,
+  onDecision,
+}: {
+  refreshKey: number;
+  onDecision: () => void;
+}) {
   const [entries, setEntries] = useState<HashEntry[]>([]);
   const [hashInput, setHashInput] = useState("");
   const [labelInput, setLabelInput] = useState("");
@@ -25,6 +31,7 @@ export function PendingHashApprovals({ refreshKey }: { refreshKey: number }) {
     try {
       await decide(hash);
       refetch();
+      onDecision();
     } catch (e) {
       setError(e instanceof Error ? e.message : "action failed");
     } finally {
