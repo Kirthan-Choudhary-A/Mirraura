@@ -6,6 +6,9 @@ const WRITE_FLAGS: [&str; 3] = ["O_WRONLY", "O_RDWR", "O_CREAT"];
 pub fn parse_trace_log(log_text: &str) -> Vec<Value> {
     let execve_re = Regex::new(r#"^(\d+)\s+execve\("([^"]+)""#).unwrap();
     let openat_re = Regex::new(r#"^(\d+)\s+openat\([^,]+,\s*"([^"]+)",\s*([A-Z_|]+)"#).unwrap();
+    // Statically-linked busybox binaries (e.g. the shadow image's `touch`)
+    // call the legacy `open` syscall directly instead of `openat`.
+    let open_re = Regex::new(r#"^(\d+)\s+open\("([^"]+)",\s*([A-Z_|]+)"#).unwrap();
     let connect_re = Regex::new(
         r#"^(\d+)\s+connect\(\d+,\s*\{sa_family=AF_INET,\s*sin_port=htons\((\d+)\),\s*sin_addr=inet_addr\("([^"]+)"\)"#,
     )
@@ -31,6 +34,18 @@ pub fn parse_trace_log(log_text: &str) -> Vec<Value> {
         }
 
         if let Some(caps) = openat_re.captures(line) {
+            let path = &caps[2];
+            let flags = &caps[3];
+            if WRITE_FLAGS.iter().any(|f| flags.contains(f)) {
+                events.push(json!({
+                    "event_type": "file_write",
+                    "file_ref": {"path": path, "action": "write"}
+                }));
+            }
+            continue;
+        }
+
+        if let Some(caps) = open_re.captures(line) {
             let path = &caps[2];
             let flags = &caps[3];
             if WRITE_FLAGS.iter().any(|f| flags.contains(f)) {
@@ -106,5 +121,22 @@ mod tests {
     fn test_empty_log_gives_no_events() {
         let events: Vec<Value> = parse_trace_log("");
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_parses_legacy_open_but_not_read_only() {
+        // busybox touch (statically linked) calls the raw `open` syscall
+        // instead of `openat` — regression check for that case.
+        let log = r#"
+9 open("/etc/mirraura-test-marker", O_RDWR|O_CREAT|O_LARGEFILE, 0666) = 3
+9 open("/etc/hostname", O_RDONLY) = 4
+"#;
+        let events = parse_trace_log(log);
+        let writes: Vec<&Value> = events
+            .iter()
+            .filter(|e| e["event_type"] == "file_write")
+            .collect();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0]["file_ref"]["path"], "/etc/mirraura-test-marker");
     }
 }

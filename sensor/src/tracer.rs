@@ -28,8 +28,11 @@ pub fn run_strace(sample_path: &str) -> io::Result<String> {
     let trace_path =
         std::env::temp_dir().join(format!("mirraura-sensor-{}.trace", std::process::id()));
 
+    // ponytail: `open` is traced alongside `openat` because statically-linked
+    // busybox binaries (the shadow image's touch, etc.) issue the legacy
+    // `open` syscall directly instead of glibc/musl's usual `openat` wrapper.
     let spawn_result = Command::new("strace")
-        .args(["-f", "-e", "trace=execve,openat,connect", "-o"])
+        .args(["-f", "-e", "trace=execve,open,openat,connect", "-o"])
         .arg(&trace_path)
         .args(["bash", sample_path])
         .output();
