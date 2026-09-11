@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
-use std::process::Command;
+use std::process::{Child, Command};
+use std::time::{Duration, Instant};
 
 use regex::Regex;
 
@@ -18,30 +19,58 @@ pub fn strip_root_execve(trace_text: &str) -> String {
     result
 }
 
-// ponytail: no timeout on the strace subprocess, matching the existing
-// Python sensor (its timeout=15 argument was never actually caught —
-// an uncaught subprocess.TimeoutExpired crashes it too, so dropping the
-// timeout keeps identical observable behavior for a hung sample).
-// Upgrade path: a watcher thread + Command::kill if a hung sample ever
-// becomes a real problem in practice.
 pub fn run_strace(sample_path: &str) -> io::Result<String> {
+    run_strace_with_timeout(sample_path, Duration::from_secs(15))
+}
+
+fn run_strace_with_timeout(sample_path: &str, timeout: Duration) -> io::Result<String> {
     let trace_path =
         std::env::temp_dir().join(format!("mirraura-sensor-{}.trace", std::process::id()));
 
     // ponytail: `open` is traced alongside `openat` because statically-linked
     // busybox binaries (the shadow image's touch, etc.) issue the legacy
     // `open` syscall directly instead of glibc/musl's usual `openat` wrapper.
-    let spawn_result = Command::new("strace")
-        .args(["-f", "-e", "trace=execve,open,openat,connect", "-o"])
-        .arg(&trace_path)
-        .args(["bash", sample_path])
-        .output();
+    let spawn_result = (|| -> io::Result<()> {
+        let mut child = Command::new("strace")
+            .args(["-f", "-e", "trace=execve,open,openat,connect", "-o"])
+            .arg(&trace_path)
+            .args(["bash", sample_path])
+            .spawn()?;
+        wait_with_deadline(&mut child, timeout)
+    })();
 
-    let trace_text = fs::read_to_string(&trace_path).unwrap_or_default();
+    let trace_text = match fs::read_to_string(&trace_path) {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("warning: failed to read strace trace file: {e}");
+            String::new()
+        }
+    };
     let _ = fs::remove_file(&trace_path);
 
     spawn_result?;
     Ok(strip_root_execve(&trace_text))
+}
+
+/// Waits for `child` to exit on its own, polling every 100ms; if it's still
+/// running once `timeout` has elapsed, kills it and reaps it instead of
+/// blocking forever. Matches the old Python sensor's de facto behavior:
+/// `subprocess.run(..., timeout=15)` kills the child at the OS level once
+/// the timeout elapses, regardless of whether the caller catches the
+/// resulting `TimeoutExpired`.
+fn wait_with_deadline(child: &mut Child, timeout: Duration) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[cfg(test)]
@@ -81,5 +110,29 @@ mod tests {
     #[test]
     fn test_no_execve_line_leaves_everything_untouched() {
         assert_eq!(strip_root_execve(NO_EXECVE_TRACE), NO_EXECVE_TRACE);
+    }
+
+    #[test]
+    fn test_wait_with_deadline_kills_a_hung_child_and_returns() {
+        // "sleep 5" would outlive a naive `.output()`/`.wait()` call; a 500ms
+        // deadline proves the kill path fires instead of blocking for 5s.
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 5"])
+            .spawn()
+            .expect("failed to spawn sh -c 'sleep 5'");
+
+        let start = Instant::now();
+        wait_with_deadline(&mut child, Duration::from_millis(500)).unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "wait_with_deadline should return shortly after its deadline, took {elapsed:?}"
+        );
+        // The child must actually be gone (killed + reaped), not just abandoned.
+        assert!(
+            child.try_wait().unwrap().is_some(),
+            "child should have been killed and reaped by the deadline"
+        );
     }
 }
