@@ -13,7 +13,7 @@ Mirraura actually ships **two** independent detection paths that both feed the s
 **Current architecture:**
 - A **Go** backend orchestrates the Docker lifecycle (spin up a network + container per upload, run the sample, tear down) and exposes the API/WebSocket the frontend talks to. It also runs a second, independent path: a background ticker that polls a persistent `mirraura-monitored-endpoint` container every 10 seconds, scores what it finds with the same verdict engine, and — on a `Compromised` verdict — disconnects that container from its network for real (containment), with reconnection only ever triggered by a human via the dashboard.
 - A **Python** verdict engine (FastAPI) does the actual scoring: a known-bad hash lookup plus a weighted rule-based behavioral scorer, and owns the tamper-evident audit log. It scores both paths identically — it has no idea whether a batch of events came from a one-shot upload or a continuous-monitoring poll cycle.
-- A **Python** sensor runs inside the shadow container, traces the sample's syscalls via `strace`, and reports what it saw in a common event format.
+- A **Rust** sensor runs inside the shadow container, traces the sample's syscalls via `strace`, and reports what it saw in a common event format.
 - A **Python** poller (`monitored-endpoint/poller.py`) runs inside the always-on monitored container, snapshotting processes/connections/files every cycle and diffing against the previous cycle to find what's new — see "Continuous behavioral monitoring" below for why this is a different capture mechanism than `strace`.
 - A **React + TypeScript** dashboard shows the live event feed, the verdict, and the audit log in real time, plus an isolation banner and a "Reconnect" control for the continuous-monitoring path.
 - Everything ships as one **Docker Compose** stack (`docker compose up --build`) so it runs identically on any teammate's machine.
@@ -84,14 +84,14 @@ See "The loop, in one sentence each" and "The continuous-monitoring loop, in one
 
 **Docker Compose (portability)** — A single YAML file (`docker-compose.yml`, `name: mirraura`) describing every service and how they connect. Anyone with Docker installed runs `docker compose up --build` (via `setup.sh`, which also builds the shadow image first) and gets the identical setup — same versions, same config, no per-teammate manual installs. This is what makes the project run identically on any machine.
 
-**strace (sensor, inside the shadow container)** — A standard Linux tool that logs every syscall a process makes. The sensor runs the sample under `strace -f -e trace=execve,openat,connect` so it sees process spawns, file writes, and network connections without writing a custom kernel-level instrumentation layer — a well-understood, battle-tested way to observe behavior cheaply.
+**strace (sensor, inside the shadow container)** — A standard Linux tool that logs every syscall a process makes. The sensor runs the sample under `strace -f -e trace=execve,open,openat,connect` so it sees process spawns, file writes, and network connections without writing a custom kernel-level instrumentation layer — a well-understood, battle-tested way to observe behavior cheaply.
 *In Mirraura:* the sensor that shells out to `strace` is a compiled Rust binary (previously Python) — same events out; the Rust rewrite also closed a gap the Python version never hit (statically-linked busybox binaries issuing the legacy `open` syscall instead of `openat`), so the sensor now traces four syscalls (`execve`, `open`, `openat`, `connect`) instead of three.
 
 **FastAPI (verdict engine, Python)** — Chosen over a bare Flask app because it validates incoming/outgoing JSON against typed models (Pydantic) automatically, which is exactly what a service defining a strict canonical event/verdict schema wants — a malformed request gets rejected with a clear error instead of silently corrupting a verdict.
 
 **Pydantic (verdict engine, Python)** — FastAPI's typed-model layer; this is *where* the canonical event/verdict schema actually lives in code (`verdict-engine/schemas.py`) — one source of truth that both validates requests and serializes responses.
 
-**pytest (Python testing, `verdict-engine/`, `sensor/`)** — The standard Python test runner; used with plain `assert` statements and, for the audit log, `tmp_path`/`conftest.py` fixtures so tests never touch real state on disk.
+**pytest (Python testing, `verdict-engine/`)** — The standard Python test runner; used with plain `assert` statements and, for the audit log, `tmp_path`/`conftest.py` fixtures so tests never touch real state on disk.
 
 **gorilla/websocket (Go)** — The standard, well-known Go WebSocket library (Go's standard library doesn't include WebSocket support) — used for the live event feed to the dashboard.
 
@@ -109,7 +109,7 @@ See "The loop, in one sentence each" and "The continuous-monitoring loop, in one
 1. **Trigger** — user uploads a file through the frontend.
 2. **Isolate** — backend creates a throwaway Docker network and a shadow container.
 3. **Detonate** — the file is copied into the shadow container and executed there, never on the real device.
-4. **Observe** — a Python sensor inside the container watches process/file/network activity and emits canonical events.
+4. **Observe** — a Rust sensor inside the container watches process/file/network activity and emits canonical events.
 5. **Score** — the Python verdict engine checks the file's hash against known-bad samples, then scores behavior against weighted rules.
 6. **Explain** — the verdict comes with a confidence number and the exact list of reasons (causal chain).
 7. **Record** — the verdict is appended to a hash-chained audit log, so it can't be silently altered later.
