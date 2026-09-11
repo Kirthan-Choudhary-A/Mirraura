@@ -1,7 +1,12 @@
-FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends strace bash && rm -rf /var/lib/apt/lists/*
-COPY sensor/parser.py /sensor/parser.py
-COPY sensor/tracer.py /sensor/tracer.py
-COPY sensor/sensor.py /sensor/sensor.py
+FROM rust:1-alpine AS build
+RUN apk add --no-cache build-base
+WORKDIR /sensor
+COPY sensor/Cargo.toml sensor/Cargo.lock ./
+COPY sensor/src ./src
+RUN cargo build --release
+
+FROM alpine:3.19
+RUN apk add --no-cache strace bash
+COPY --from=build /sensor/target/release/sensor /sensor/sensor
 WORKDIR /samples
 CMD ["sleep", "infinity"]
