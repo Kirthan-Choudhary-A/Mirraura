@@ -27,12 +27,12 @@ export function MonitorBanner({
   }
 
   return (
-    <div style={{ background: "#5c1a1a", color: "white", padding: "0.75rem 1rem" }}>
-      Monitored endpoint isolated — network disconnected after a Compromised verdict.
-      <button onClick={handleReconnect} disabled={busy} style={{ marginLeft: "1rem" }}>
-        {busy ? "Reconnecting..." : "Reconnect"}
+    <div className="monitor-banner">
+      <span>Monitored endpoint isolated — network disconnected after a Compromised verdict.</span>
+      <button className="monitor-banner__button" onClick={handleReconnect} disabled={busy}>
+        {busy ? "Reconnecting…" : "Reconnect"}
       </button>
-      {error && <span style={{ marginLeft: "1rem", color: "#ffb3b3" }}>{error}</span>}
+      {error && <span className="monitor-banner__error">{error}</span>}
     </div>
   );
 }

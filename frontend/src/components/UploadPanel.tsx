@@ -23,12 +23,16 @@ export function UploadPanel({ onVerdict }: { onVerdict: (v: Verdict) => void }) 
   }
 
   return (
-    <div>
-      <input ref={inputRef} type="file" disabled={busy} />
-      <button onClick={handleUpload} disabled={busy}>
-        {busy ? "Detonating in shadow node..." : "Upload sample"}
-      </button>
-      {error && <p style={{ color: "red" }}>{error}</p>}
+    <div className="panel">
+      <h2>Detonate Sample</h2>
+      <div className="upload-panel__row">
+        <input ref={inputRef} type="file" disabled={busy} className="upload-panel__input" />
+        <button className="run-button" onClick={handleUpload} disabled={busy}>
+          {busy && <span className="spinner" aria-hidden="true" />}
+          {busy ? "Detonating sample…" : "Run sample"}
+        </button>
+      </div>
+      {error && <p className="error-text">{error}</p>}
     </div>
   );
 }

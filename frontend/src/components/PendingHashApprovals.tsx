@@ -56,48 +56,51 @@ export function PendingHashApprovals({
   }
 
   return (
-    <div>
+    <div className="panel">
       <h2>Pending Hash Approvals</h2>
-      {pending.length === 0 && <p>No pending hashes.</p>}
+      {pending.length === 0 && <p className="empty-copy">No hashes awaiting review.</p>}
       {pending.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Hash</th>
-              <th>Label</th>
-              <th>Source</th>
-              <th>Proposed</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pending.map((e) => (
-              <tr key={e.hash}>
-                <td>{e.hash.slice(0, 12)}...</td>
-                <td>{e.label}</td>
-                <td>{e.source}</td>
-                <td>{e.proposed_at}</td>
-                <td>
-                  <button
-                    disabled={busyHash === e.hash}
-                    onClick={() => handleDecision(e.hash, approveHash)}
-                  >
-                    Approve
-                  </button>
-                  <button
-                    disabled={busyHash === e.hash}
-                    onClick={() => handleDecision(e.hash, rejectHash)}
-                    style={{ marginLeft: "0.5rem" }}
-                  >
-                    Reject
-                  </button>
-                </td>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Hash</th>
+                <th>Label</th>
+                <th>Source</th>
+                <th>Proposed</th>
+                <th>Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {pending.map((e) => (
+                <tr key={e.hash}>
+                  <td className="mono">{e.hash.slice(0, 12)}...</td>
+                  <td className="label-cell">{e.label}</td>
+                  <td className="label-cell">{e.source}</td>
+                  <td className="mono">{e.proposed_at}</td>
+                  <td>
+                    <button
+                      className="approve-button"
+                      disabled={busyHash === e.hash}
+                      onClick={() => handleDecision(e.hash, approveHash)}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      className="reject-button"
+                      disabled={busyHash === e.hash}
+                      onClick={() => handleDecision(e.hash, rejectHash)}
+                    >
+                      Reject
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
-      <form onSubmit={handleSubmit} style={{ marginTop: "0.75rem" }}>
+      <form onSubmit={handleSubmit} className="hash-form">
         <input
           placeholder="sha256 hash"
           value={hashInput}
@@ -107,13 +110,10 @@ export function PendingHashApprovals({
           placeholder="label"
           value={labelInput}
           onChange={(e) => setLabelInput(e.target.value)}
-          style={{ marginLeft: "0.5rem" }}
         />
-        <button type="submit" style={{ marginLeft: "0.5rem" }}>
-          Submit for approval
-        </button>
+        <button type="submit">Submit for approval</button>
       </form>
-      {error && <p style={{ color: "#c0392b" }}>{error}</p>}
+      {error && <p className="error-text">{error}</p>}
     </div>
   );
 }

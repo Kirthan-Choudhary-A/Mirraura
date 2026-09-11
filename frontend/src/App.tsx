@@ -40,19 +40,33 @@ function App() {
   }
 
   return (
-    <div>
-      <h1>Mirraura</h1>
+    <div className="app">
+      <header className="app-header">
+        <h1 className="app-header__title">Mirraura</h1>
+        <p className="app-header__subtitle">
+          Shadow honeypot — live behavioral verdict engine
+        </p>
+      </header>
+
+      <section className="detonation-zone">
+        <div className="detonation-zone__left" onClickCapture={handleNewRun}>
+          <UploadPanel onVerdict={handleUpload} />
+          <VerdictPanel verdict={verdict} />
+        </div>
+        <div className="detonation-zone__right">
+          <EventFeed events={events} />
+        </div>
+      </section>
+
       <MonitorBanner isolated={isolated} onReconnected={() => setIsolated(false)} />
-      <div onClickCapture={handleNewRun}>
-        <UploadPanel onVerdict={handleUpload} />
-      </div>
-      <EventFeed events={events} />
-      <VerdictPanel verdict={verdict} />
-      <AuditLogTable refreshKey={refreshKey} />
-      <PendingHashApprovals
-        refreshKey={refreshKey}
-        onDecision={() => setRefreshKey((k) => k + 1)}
-      />
+
+      <section className="admin-zone">
+        <PendingHashApprovals
+          refreshKey={refreshKey}
+          onDecision={() => setRefreshKey((k) => k + 1)}
+        />
+        <AuditLogTable refreshKey={refreshKey} />
+      </section>
     </div>
   );
 }
