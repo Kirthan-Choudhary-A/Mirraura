@@ -1,0 +1,13 @@
+{
+  "expected_verdict": "Normal",
+  "events": [
+    {
+      "event_id": "e1",
+      "device_id": "shadow-node",
+      "event_type": "file_write",
+      "file_ref": {"path": "/tmp/output.log", "action": "write"},
+      "timestamp": "2026-09-11T00:00:00Z",
+      "baseline_deviation_score": 0.0
+    }
+  ]
+}

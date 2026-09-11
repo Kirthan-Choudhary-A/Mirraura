@@ -1,0 +1,8 @@
+{
+  "expected_verdict": "Compromised",
+  "events": [
+    {"event_id": "e1", "device_id": "shadow-node", "event_type": "process_spawn", "process_ref": {"pid": 200, "name": "touch", "parent_pid": 1}, "timestamp": "2026-09-11T00:00:00Z", "baseline_deviation_score": 0.0},
+    {"event_id": "e2", "device_id": "shadow-node", "event_type": "file_write", "file_ref": {"path": "/etc/mirraura-fixture-marker", "action": "write"}, "timestamp": "2026-09-11T00:00:01Z", "baseline_deviation_score": 0.0},
+    {"event_id": "e3", "device_id": "shadow-node", "event_type": "network_connect", "network_ref": {"dst_ip": "127.0.0.1", "dst_port": 9999, "protocol": "tcp"}, "timestamp": "2026-09-11T00:00:02Z", "baseline_deviation_score": 0.0}
+  ]
+}

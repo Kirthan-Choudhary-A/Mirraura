@@ -1,0 +1,13 @@
+{
+  "expected_verdict": "Suspicious",
+  "events": [
+    {
+      "event_id": "e1",
+      "device_id": "shadow-node",
+      "event_type": "process_spawn",
+      "process_ref": {"pid": 100, "name": "sh", "parent_pid": 1},
+      "timestamp": "2026-09-11T00:00:00Z",
+      "baseline_deviation_score": 0.0
+    }
+  ]
+}

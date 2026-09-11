@@ -1,0 +1,11 @@
+{
+  "expected_verdict": "Suspicious",
+  "events": [
+    {"event_id": "e1", "device_id": "shadow-node", "event_type": "file_write", "file_ref": {"path": "/tmp/f1", "action": "write"}, "timestamp": "2026-09-11T00:00:00Z", "baseline_deviation_score": 0.0},
+    {"event_id": "e2", "device_id": "shadow-node", "event_type": "file_write", "file_ref": {"path": "/tmp/f2", "action": "write"}, "timestamp": "2026-09-11T00:00:01Z", "baseline_deviation_score": 0.0},
+    {"event_id": "e3", "device_id": "shadow-node", "event_type": "file_write", "file_ref": {"path": "/tmp/f3", "action": "write"}, "timestamp": "2026-09-11T00:00:02Z", "baseline_deviation_score": 0.0},
+    {"event_id": "e4", "device_id": "shadow-node", "event_type": "file_delete", "file_ref": {"path": "/tmp/f1", "action": "delete"}, "timestamp": "2026-09-11T00:00:03Z", "baseline_deviation_score": 0.0},
+    {"event_id": "e5", "device_id": "shadow-node", "event_type": "file_write", "file_ref": {"path": "/tmp/f4", "action": "write"}, "timestamp": "2026-09-11T00:00:04Z", "baseline_deviation_score": 0.0},
+    {"event_id": "e6", "device_id": "shadow-node", "event_type": "file_write", "file_ref": {"path": "/tmp/f5", "action": "write"}, "timestamp": "2026-09-11T00:00:05Z", "baseline_deviation_score": 0.0}
+  ]
+}
