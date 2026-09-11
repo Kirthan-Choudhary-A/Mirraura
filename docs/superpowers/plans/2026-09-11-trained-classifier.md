@@ -311,12 +311,12 @@ def test_score_events_sensitive_write_appears_in_chain():
     assert "sensitive path" in chain[0]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 3: Run tests to verify they fail**
 
 Run: `cd verdict-engine && python -m pytest tests/test_trained_scorer.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'trained_scorer'`.
 
-- [ ] **Step 3: Implement the scorer module**
+- [ ] **Step 4: Implement the scorer module**
 
 Create `verdict-engine/trained_scorer.py`:
 
@@ -404,12 +404,12 @@ def score_events(events: List[Event]) -> Tuple[float, List[str]]:
     return confidence, chain
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `cd verdict-engine && python -m pytest tests/test_trained_scorer.py -v`
 Expected: all PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add verdict-engine/trained_scorer.py verdict-engine/trained_weights.json verdict-engine/tests/test_trained_scorer.py
