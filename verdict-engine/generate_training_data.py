@@ -89,6 +89,8 @@ def generate_dataset(n: int, seed: int) -> List[Tuple[List[Event], bool]]:
         raise ValueError("n must be at least 160 to stratify across 16 feature combinations")
     rng = random.Random(seed)
     combos = [(bool(i & 1), bool(i & 2), bool(i & 4), bool(i & 8)) for i in range(16)]
+    # Stratifies evenly across the 16 feature combos, so the returned dataset
+    # size is n floored to the nearest multiple of 16 (e.g. n=200 -> 192).
     per_combo = n // 16
     dataset: List[Tuple[List[Event], bool]] = []
     for combo in combos:
