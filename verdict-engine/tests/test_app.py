@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app import app
+import app as app_module
 
 client = TestClient(app)
 
@@ -187,3 +188,37 @@ def test_approve_already_decided_hash_returns_409():
     client.post(f"/hashes/{sample_hash}/approve")
     resp = client.post(f"/hashes/{sample_hash}/approve")
     assert resp.status_code == 409
+
+
+def test_score_writes_event_archive_entry():
+    events = [
+        {
+            "event_id": "e1",
+            "device_id": "shadow-node",
+            "event_type": "process_spawn",
+            "process_ref": {"pid": 1, "name": "sh", "parent_pid": 0},
+            "timestamp": "2026-09-11T00:00:00Z",
+            "baseline_deviation_score": 0.0,
+        }
+    ]
+    resp = client.post(
+        "/score", json={"sample_hash": "6" * 64, "events": events, "source": "sample"}
+    )
+    verdict_id = resp.json()["verdict_id"]
+
+    matches = [r for r in app_module.event_archive.all() if r["verdict_id"] == verdict_id]
+    assert len(matches) == 1
+    assert matches[0]["sample_hash"] == "6" * 64
+    assert matches[0]["source"] == "sample"
+    assert matches[0]["verdict_at_capture"] == "Suspicious"
+    assert matches[0]["events"][0]["event_id"] == "e1"
+
+
+def test_archive_write_failure_does_not_break_score(monkeypatch):
+    def boom(record):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(app_module.event_archive, "append", boom)
+    resp = client.post("/score", json={"sample_hash": "7" * 64, "events": []})
+    assert resp.status_code == 200
+    assert resp.json()["verdict"] == "Inconclusive"

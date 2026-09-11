@@ -9,3 +9,4 @@ dist/
 *.trace
 samples/eicar.txt
 verdict-engine/tests/test_audit_log.jsonl
+verdict-engine/tests/test_event_archive.jsonl

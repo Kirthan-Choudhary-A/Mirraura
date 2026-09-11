@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from audit_log import AuditLog
+from event_archive import EventArchive
 from hash_lookup import (
     HashExistsError,
     HashNotFoundError,
@@ -25,6 +26,7 @@ from schemas import Event, Verdict
 
 app = FastAPI()
 audit_log = AuditLog(Path(os.getenv("AUDIT_LOG_PATH", "/data/audit_log.jsonl")))
+event_archive = EventArchive(Path(os.getenv("EVENT_ARCHIVE_PATH", "/data/event_archive.jsonl")))
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +94,24 @@ def score(req: ScoreRequest):
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     stored = audit_log.append(record)
+
+    try:
+        event_archive.append(
+            {
+                "verdict_id": verdict_id,
+                "sample_hash": req.sample_hash,
+                "source": req.source,
+                "events": [e.model_dump() for e in req.events],
+                "verdict_at_capture": verdict,
+                "confidence_at_capture": confidence,
+                "timestamp": record["timestamp"],
+            }
+        )
+    except Exception:
+        logger.warning(
+            "failed to archive events for verdict %s", verdict_id, exc_info=True
+        )
+
     return Verdict(**_strip_entry_hash(stored))
 
 
