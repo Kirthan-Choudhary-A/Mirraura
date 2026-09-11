@@ -14,3 +14,4 @@ verdict-engine/revalidation_candidates/*.py
 !verdict-engine/revalidation_candidates/.gitkeep
 verdict-engine/revalidation_reports/*.json
 !verdict-engine/revalidation_reports/.gitkeep
+sensor/target/
