@@ -72,7 +72,9 @@ See "The loop, in one sentence each" and "The continuous-monitoring loop, in one
 
 **Go (backend orchestrator, `backend/`)** — Genuinely good at exactly what the orchestrator needs: talking to the Docker API to spin up/tear down containers and networks, and handling many concurrent things (multiple runs, a live WebSocket feed to the frontend) without much ceremony. Compiles to a single binary — convenient for a demo, no runtime to install on the machine that runs it.
 
-**Python (verdict engine + in-container sensor, `verdict-engine/`, `sensor/`)** — Fast to write correct data-processing/scoring logic in, the natural language for anything ML-adjacent (so a phase-2 trained classifier slots in with no rewrite), and the language the mentor expects to see used.
+**Python (verdict engine, `verdict-engine/`)** — Fast to write correct data-processing/scoring logic in, the natural language for anything ML-adjacent (so a phase-2 trained classifier slots in with no rewrite), and the language the mentor expects to see used.
+
+**Rust (in-container sensor, `sensor/`)** — The sensor parses `strace`'s raw text output from an untrusted sample's behavior — exactly the kind of string/byte handling where a memory-safety bug would matter most, and Rust's ownership model rules out a whole class of parsing bugs at compile time. It also compiles to a single static-ish binary with no runtime to install in the shadow image, so the container that runs untrusted samples carries less software (no Python interpreter, no pip packages) than it did before.
 
 **TypeScript + React (frontend, `frontend/`)** — A standard, well-supported way to build a live dashboard (file upload, a real-time event feed, verdict display, audit log table) with strong typing so the UI's data shapes stay honest against the backend's schemas.
 
@@ -83,6 +85,7 @@ See "The loop, in one sentence each" and "The continuous-monitoring loop, in one
 **Docker Compose (portability)** — A single YAML file (`docker-compose.yml`, `name: mirraura`) describing every service and how they connect. Anyone with Docker installed runs `docker compose up --build` (via `setup.sh`, which also builds the shadow image first) and gets the identical setup — same versions, same config, no per-teammate manual installs. This is what makes the project run identically on any machine.
 
 **strace (sensor, inside the shadow container)** — A standard Linux tool that logs every syscall a process makes. The sensor runs the sample under `strace -f -e trace=execve,openat,connect` so it sees process spawns, file writes, and network connections without writing a custom kernel-level instrumentation layer — a well-understood, battle-tested way to observe behavior cheaply.
+*In Mirraura:* the sensor that shells out to `strace` is a compiled Rust binary (previously Python) — same invocation, same three syscalls traced, same events out; only the language parsing `strace`'s output changed.
 
 **FastAPI (verdict engine, Python)** — Chosen over a bare Flask app because it validates incoming/outgoing JSON against typed models (Pydantic) automatically, which is exactly what a service defining a strict canonical event/verdict schema wants — a malformed request gets rejected with a clear error instead of silently corrupting a verdict.
 

@@ -109,7 +109,7 @@ func (m *DockerManager) execAndStream(ctx context.Context, containerID string, c
 }
 
 func (m *DockerManager) RunSensor(ctx context.Context, containerID, samplePathInContainer string) (<-chan string, error) {
-	return m.execAndStream(ctx, containerID, []string{"python3", "/sensor/sensor.py", samplePathInContainer})
+	return m.execAndStream(ctx, containerID, []string{"/sensor/sensor", samplePathInContainer})
 }
 
 func (m *DockerManager) RunPoller(ctx context.Context, containerID string) (<-chan string, error) {
