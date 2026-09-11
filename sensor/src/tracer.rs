@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use regex::Regex;
@@ -35,6 +35,13 @@ fn run_strace_with_timeout(sample_path: &str, timeout: Duration) -> io::Result<S
             .args(["-f", "-e", "trace=execve,open,openat,connect", "-o"])
             .arg(&trace_path)
             .args(["bash", sample_path])
+            // The traced sample is untrusted and may write to its own
+            // stdout/stderr; Command::spawn() inherits the parent's stdio by
+            // default (unlike .output()), which would let sample output
+            // interleave with the sensor's JSON event protocol on our real
+            // stdout. Discard both explicitly.
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()?;
         wait_with_deadline(&mut child, timeout)
     })();
@@ -133,6 +140,42 @@ mod tests {
         assert!(
             child.try_wait().unwrap().is_some(),
             "child should have been killed and reaped by the deadline"
+        );
+    }
+
+    #[test]
+    fn test_traced_child_stdio_is_discarded_not_inherited() {
+        // Two things must both hold: (1) Stdio::null() on stdout/stderr
+        // doesn't break spawning/waiting on a child that writes to them, and
+        // (2) the actual strace Command builder in this file sets
+        // .stdout(Stdio::null()).stderr(Stdio::null()) before .spawn(), so
+        // nothing an untrusted traced sample writes can land on the sensor's
+        // real (inherited) stdout/stderr and corrupt the JSON event stream.
+        let status = Command::new("sh")
+            .args(["-c", "echo leaked-stdout; echo leaked-stderr >&2"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn sh -c echo")
+            .wait()
+            .expect("failed to wait on child");
+        assert!(status.success());
+
+        let source = include_str!("tracer.rs");
+        let after_strace = source
+            .split("Command::new(\"strace\")")
+            .nth(1)
+            .expect("strace Command builder not found in source");
+        let builder = &after_strace[..after_strace
+            .find(".spawn()")
+            .expect(".spawn() not found on strace Command builder")];
+        assert!(
+            builder.contains(".stdout(Stdio::null())"),
+            "strace child must discard stdout, not inherit the sensor's"
+        );
+        assert!(
+            builder.contains(".stderr(Stdio::null())"),
+            "strace child must discard stderr, not inherit the sensor's"
         );
     }
 }
