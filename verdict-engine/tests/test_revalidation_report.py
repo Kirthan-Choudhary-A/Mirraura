@@ -144,3 +144,22 @@ def test_load_candidate_loads_real_module(tmp_path):
     )
     module = load_candidate(good)
     assert module.score_events([]) == (0.0, [])
+
+
+def test_load_candidate_nonexistent_file_raises(tmp_path):
+    nonexistent = tmp_path / "nonexistent.py"
+    try:
+        load_candidate(nonexistent)
+        assert False, "expected ImportError"
+    except ImportError:
+        pass
+
+
+def test_load_candidate_syntax_error_raises(tmp_path):
+    bad_syntax = tmp_path / "bad_syntax.py"
+    bad_syntax.write_text("def this_is_broken(\n")
+    try:
+        load_candidate(bad_syntax)
+        assert False, "expected ImportError"
+    except ImportError:
+        pass

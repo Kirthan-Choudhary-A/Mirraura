@@ -10,7 +10,10 @@ def load_candidate(path: Path):
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load candidate module from {path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        raise ImportError(f"cannot load candidate module from {path}: {e}") from e
     if not hasattr(module, "score_events") or not hasattr(module, "verdict_from_score"):
         raise AttributeError(
             f"candidate module {path} must define score_events and verdict_from_score"
