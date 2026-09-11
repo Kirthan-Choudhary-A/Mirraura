@@ -10,3 +10,7 @@ dist/
 samples/eicar.txt
 verdict-engine/tests/test_audit_log.jsonl
 verdict-engine/tests/test_event_archive.jsonl
+verdict-engine/revalidation_candidates/*.py
+!verdict-engine/revalidation_candidates/.gitkeep
+verdict-engine/revalidation_reports/*.json
+!verdict-engine/revalidation_reports/.gitkeep

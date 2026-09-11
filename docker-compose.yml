@@ -20,8 +20,11 @@ services:
     environment:
       - AUDIT_LOG_PATH=/data/audit_log.jsonl
       - KNOWN_BAD_HASHES_PATH=/data/known_bad_hashes.json
+      - EVENT_ARCHIVE_PATH=/data/event_archive.jsonl
     volumes:
       - audit-log-data:/data
+      - ./verdict-engine/revalidation_candidates:/app/revalidation_candidates
+      - ./verdict-engine/revalidation_reports:/app/revalidation_reports
 
   frontend:
     build: ./frontend
