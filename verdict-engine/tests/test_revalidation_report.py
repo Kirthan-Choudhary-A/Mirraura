@@ -63,6 +63,54 @@ def test_run_archive_detects_flip():
     assert results[0]["flipped"] is True
 
 
+def test_run_archive_skips_known_bad_match_entries():
+    # verdict_at_capture came from the hash short-circuit, never score_events();
+    # even though the candidate would score these events completely differently
+    # (Compromised, confidence 0.9), that must not be reported as a flip.
+    entries = [
+        {
+            "verdict_id": "v1",
+            "sample_hash": "a" * 64,
+            "source": "sample",
+            "events": [_event_dict()],
+            "verdict_at_capture": "Compromised",
+            "confidence_at_capture": 1.0,
+            "known_bad_match": True,
+        }
+    ]
+    results = run_archive(entries, _StubScorer(0.9, ["x"]))
+
+    assert results[0]["skipped"] == "hash short-circuit, not scored"
+    assert "flipped" not in results[0]
+    assert "after_verdict" not in results[0]
+
+    report = build_report([], results)
+    assert report["archive"]["flipped_count"] == 0
+    assert report["archive"]["skipped_count"] == 1
+    assert report["archive"]["scored_total"] == 0
+
+    # must not crash formatting a result with no after_verdict/flipped fields
+    table = format_table(build_report([], results))
+    assert "0 / 0 verdicts changed" in table
+
+
+def test_run_archive_missing_known_bad_match_field_is_scored_normally():
+    # old archive lines written before this field existed must still load and
+    # score fine via entry.get(...), not raise a KeyError.
+    entries = [
+        {
+            "verdict_id": "v1",
+            "sample_hash": "a" * 64,
+            "source": "sample",
+            "events": [_event_dict()],
+            "verdict_at_capture": "Suspicious",
+        }
+    ]
+    results = run_archive(entries, _StubScorer(0.9, ["x"]))
+    assert results[0]["after_verdict"] == "Compromised"
+    assert results[0]["flipped"] is True
+
+
 def test_run_archive_no_flip():
     entries = [
         {

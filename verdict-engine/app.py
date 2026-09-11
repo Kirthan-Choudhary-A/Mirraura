@@ -104,6 +104,7 @@ def score(req: ScoreRequest):
                 "events": [e.model_dump() for e in req.events],
                 "verdict_at_capture": verdict,
                 "confidence_at_capture": confidence,
+                "known_bad_match": bool(known_bad_label),
                 "timestamp": record["timestamp"],
             }
         )

@@ -51,6 +51,21 @@ def run_fixtures(fixtures: List[dict], current_module, candidate_module) -> List
 def run_archive(archive_entries: List[dict], candidate_module) -> List[dict]:
     results = []
     for entry in archive_entries:
+        # A known-bad-hash short-circuit verdict never came from score_events() in
+        # the first place (see app.py's score() handler), so there's nothing
+        # honest to diff it against — re-scoring its events and comparing to
+        # verdict_at_capture would report a meaningless "flip" on every entry.
+        if entry.get("known_bad_match"):
+            results.append(
+                {
+                    "verdict_id": entry["verdict_id"],
+                    "sample_hash": entry["sample_hash"],
+                    "source": entry["source"],
+                    "before_verdict": entry.get("verdict_at_capture"),
+                    "skipped": "hash short-circuit, not scored",
+                }
+            )
+            continue
         events = [Event(**e) for e in entry["events"]]
         after_verdict, after_conf, _ = score_with(candidate_module, events)
         before_verdict = entry["verdict_at_capture"]
@@ -76,7 +91,11 @@ def build_report(
     fixture_total = len(fixture_results)
     before_correct = sum(1 for r in fixture_results if r["before_correct"])
     after_correct = sum(1 for r in fixture_results if r["after_correct"])
-    flips = [r for r in archive_results if r["flipped"]]
+    # .get(...) rather than [...]: known-bad-hash entries carry no "flipped" key
+    # (they're never scored, see run_archive) and must never count as a flip.
+    scored_results = [r for r in archive_results if not r.get("skipped")]
+    skipped_results = [r for r in archive_results if r.get("skipped")]
+    flips = [r for r in scored_results if r.get("flipped")]
     return {
         "fixtures": {
             "total": fixture_total,
@@ -87,6 +106,8 @@ def build_report(
         "archive": {
             "skipped_reason": archive_skipped_reason,
             "total": len(archive_results),
+            "scored_total": len(scored_results),
+            "skipped_count": len(skipped_results),
             "flipped_count": len(flips),
             "results": archive_results,
         },
@@ -115,9 +136,10 @@ def format_table(report: dict) -> str:
     if ar["skipped_reason"]:
         lines.append(f"  skipped: {ar['skipped_reason']}")
     else:
-        lines.append(f"{ar['flipped_count']} / {ar['total']} verdicts changed")
+        skip_note = f"  ({ar['skipped_count']} skipped: hash short-circuit)" if ar["skipped_count"] else ""
+        lines.append(f"{ar['flipped_count']} / {ar['scored_total']} verdicts changed{skip_note}")
         for r in ar["results"]:
-            if r["flipped"]:
+            if r.get("flipped"):
                 lines.append(
                     f"  {r['verdict_id'][:8]}  {r['source']:<8} "
                     f"{r['before_verdict']} -> {r['after_verdict']}"

@@ -23,6 +23,17 @@ def test_score_hash_hit_is_compromised():
     assert "EICAR-Test-File" in body["causal_chain"][0]
 
 
+def test_score_hash_hit_archives_known_bad_match():
+    verdict_id = client.post(
+        "/score", json={"sample_hash": EICAR_HASH, "events": []}
+    ).json()["verdict_id"]
+
+    matches = [r for r in app_module.event_archive.all() if r["verdict_id"] == verdict_id]
+    assert len(matches) == 1
+    assert matches[0]["known_bad_match"] is True
+    assert matches[0]["verdict_at_capture"] == "Compromised"
+
+
 def test_score_no_events_is_inconclusive():
     resp = client.post("/score", json={"sample_hash": "f" * 64, "events": []})
     body = resp.json()
@@ -211,6 +222,8 @@ def test_score_writes_event_archive_entry():
     assert matches[0]["sample_hash"] == "6" * 64
     assert matches[0]["source"] == "sample"
     assert matches[0]["verdict_at_capture"] == "Suspicious"
+    assert matches[0]["confidence_at_capture"] == 0.3
+    assert matches[0]["known_bad_match"] is False
     assert matches[0]["events"][0]["event_id"] == "e1"
 
 
