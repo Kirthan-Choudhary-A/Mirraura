@@ -1,0 +1,7 @@
+{
+  "child_process": 0.3,
+  "sensitive_write": 0.25,
+  "odd_port": 0.2,
+  "rapid_file_changes": 0.25,
+  "intercept": -0.6
+}
