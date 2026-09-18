@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { approveHash, fetchHashes, fetchVerdicts, rejectHash, uploadSample } from "./api";
-import { applyLiveEvent, shouldUpdateSampleVerdict } from "./api";
+import { applyLiveEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import type { MirraEvent, Verdict } from "./types";
 
 function makeEvent(id: string): MirraEvent {
@@ -118,5 +118,16 @@ describe("shouldUpdateSampleVerdict", () => {
 
   it("is false for a non-verdict message", () => {
     expect(shouldUpdateSampleVerdict({ type: "reconnected" })).toBe(false);
+  });
+});
+
+describe("nextBackoffMs", () => {
+  it("doubles the current delay", () => {
+    expect(nextBackoffMs(1000)).toBe(2000);
+  });
+
+  it("caps at 30 seconds", () => {
+    expect(nextBackoffMs(20000)).toBe(30000);
+    expect(nextBackoffMs(30000)).toBe(30000);
   });
 });

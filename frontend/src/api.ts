@@ -81,9 +81,57 @@ export function shouldUpdateSampleVerdict(
   return msg.type === "verdict" && msg.source === "sample";
 }
 
-export function connectLive(onMessage: (msg: LiveMessage) => void): WebSocket {
-  const wsUrl = BASE.replace(/^http/, "ws") + "/api/live";
-  const ws = new WebSocket(wsUrl);
-  ws.onmessage = (ev) => onMessage(JSON.parse(ev.data));
-  return ws;
+export type ConnectionState = "connecting" | "live" | "offline";
+
+const INITIAL_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 30000;
+
+export function nextBackoffMs(current: number): number {
+  return Math.min(current * 2, MAX_BACKOFF_MS);
+}
+
+export function connectLive(
+  onMessage: (msg: LiveMessage) => void,
+  onStatus: (state: ConnectionState) => void
+): { close: () => void } {
+  let ws: WebSocket | null = null;
+  let closed = false;
+  let backoff = INITIAL_BACKOFF_MS;
+
+  function connect() {
+    if (closed) return;
+    onStatus("connecting");
+    const wsUrl = BASE.replace(/^http/, "ws") + "/api/live";
+    ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      backoff = INITIAL_BACKOFF_MS;
+      onStatus("live");
+    };
+    ws.onmessage = (ev) => {
+      try {
+        onMessage(JSON.parse(ev.data));
+      } catch {
+        // malformed frame — drop it rather than crash the socket handler
+      }
+    };
+    ws.onclose = () => {
+      if (closed) return;
+      onStatus("offline");
+      const delay = backoff;
+      backoff = nextBackoffMs(backoff);
+      setTimeout(connect, delay);
+    };
+    ws.onerror = () => {
+      ws?.close();
+    };
+  }
+
+  connect();
+
+  return {
+    close() {
+      closed = true;
+      ws?.close();
+    },
+  };
 }
