@@ -52,6 +52,10 @@ class HashSubmitRequest(BaseModel):
     label: str
 
 
+class HashDecisionRequest(BaseModel):
+    actor: str = ""
+
+
 def _strip_entry_hash(record: dict) -> dict:
     return {k: v for k, v in record.items() if k != "entry_hash"}
 
@@ -169,7 +173,7 @@ def submit_hash_route(req: HashSubmitRequest):
 
 
 @app.post("/hashes/{hash}/approve")
-def approve_hash_route(hash: str):
+def approve_hash_route(hash: str, req: HashDecisionRequest):
     try:
         entry = approve_hash(hash)
     except HashNotFoundError:
@@ -182,6 +186,7 @@ def approve_hash_route(hash: str):
             "action": "hash_approved",
             "hash": entry["hash"],
             "label": entry["label"],
+            "actor": req.actor,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -189,7 +194,7 @@ def approve_hash_route(hash: str):
 
 
 @app.post("/hashes/{hash}/reject")
-def reject_hash_route(hash: str):
+def reject_hash_route(hash: str, req: HashDecisionRequest):
     try:
         entry = reject_hash(hash)
     except HashNotFoundError:
@@ -202,6 +207,7 @@ def reject_hash_route(hash: str):
             "action": "hash_rejected",
             "hash": entry["hash"],
             "label": entry["label"],
+            "actor": req.actor,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )

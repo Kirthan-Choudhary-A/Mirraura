@@ -159,7 +159,7 @@ def test_manual_hash_submission_then_approve_flow():
     score_resp = client.post("/score", json={"sample_hash": sample_hash, "events": []})
     assert score_resp.json()["verdict"] == "Inconclusive"
 
-    approve_resp = client.post(f"/hashes/{sample_hash}/approve")
+    approve_resp = client.post(f"/hashes/{sample_hash}/approve", json={})
     assert approve_resp.status_code == 200
     assert approve_resp.json()["status"] == "approved"
 
@@ -175,7 +175,7 @@ def test_manual_hash_submission_then_approve_flow():
 def test_manual_hash_submission_reject_flow():
     sample_hash = "2" * 64
     client.post("/hashes", json={"hash": sample_hash, "label": "reject-test"})
-    reject_resp = client.post(f"/hashes/{sample_hash}/reject")
+    reject_resp = client.post(f"/hashes/{sample_hash}/reject", json={})
     assert reject_resp.status_code == 200
     assert reject_resp.json()["status"] == "rejected"
 
@@ -201,16 +201,26 @@ def test_submit_duplicate_hash_conflicts():
 
 
 def test_approve_unknown_hash_returns_404():
-    resp = client.post(f"/hashes/{'4' * 64}/approve")
+    resp = client.post(f"/hashes/{'4' * 64}/approve", json={})
     assert resp.status_code == 404
 
 
 def test_approve_already_decided_hash_returns_409():
     sample_hash = "5" * 64
     client.post("/hashes", json={"hash": sample_hash, "label": "x"})
-    client.post(f"/hashes/{sample_hash}/approve")
-    resp = client.post(f"/hashes/{sample_hash}/approve")
+    client.post(f"/hashes/{sample_hash}/approve", json={})
+    resp = client.post(f"/hashes/{sample_hash}/approve", json={})
     assert resp.status_code == 409
+
+
+def test_approve_hash_records_actor():
+    sample_hash = "e" * 64
+    client.post("/hashes", json={"hash": sample_hash, "label": "actor-test"})
+    resp = client.post(f"/hashes/{sample_hash}/approve", json={"actor": "alice"})
+    assert resp.status_code == 200
+    listed = client.get("/verdicts").json()
+    match = next(r for r in listed if r.get("action") == "hash_approved" and r.get("hash") == sample_hash)
+    assert match["actor"] == "alice"
 
 
 def test_score_writes_event_archive_entry():

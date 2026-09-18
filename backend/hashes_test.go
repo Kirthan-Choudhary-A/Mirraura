@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,25 +60,29 @@ func TestHashesHandlerRejectsOtherMethods(t *testing.T) {
 	}
 }
 
-func TestHashDecisionHandlerProxiesApprove(t *testing.T) {
+func TestHashDecisionHandlerProxiesApproveWithActor(t *testing.T) {
+	var gotBody map[string]any
 	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/hashes/abc123/approve" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
+		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"hash":"abc123","status":"approved"}`))
 	}))
 	defer fakeEngine.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/hashes/abc123/approve", nil)
+	ctx := context.WithValue(req.Context(), sessionCtxKey, Session{Username: "alice", Role: "admin"})
+	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	hashDecisionHandler(fakeEngine.URL)(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `"status":"approved"`) {
-		t.Fatalf("expected proxied body, got %s", rec.Body.String())
+	if gotBody["actor"] != "alice" {
+		t.Fatalf("expected actor=alice forwarded to verdict-engine, got %v", gotBody["actor"])
 	}
 }
 
