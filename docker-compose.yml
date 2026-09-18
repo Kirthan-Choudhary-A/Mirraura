@@ -11,6 +11,7 @@ services:
       - MIRRAURA_USERS_PATH=${MIRRAURA_USERS_PATH:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./users.json:/app/users.json:ro
     depends_on:
       - verdict-engine
 

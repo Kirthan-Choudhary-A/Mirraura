@@ -11,6 +11,7 @@ if [ -z "$MIRRAURA_ADMIN_PASSWORD" ] || [ "${#MIRRAURA_ADMIN_PASSWORD}" -lt 12 ]
   echo "MIRRAURA_ADMIN_PASSWORD must be set in .env and at least 12 characters." >&2
   exit 1
 fi
+[ -f users.json ] || echo '[]' > users.json
 
 docker build -f shadow-image/Dockerfile -t mirraura-shadow:latest .
 docker compose up --build

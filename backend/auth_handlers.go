@@ -16,6 +16,19 @@ const sessionCtxKey ctxKey = 0
 
 const sessionCookieName = "mirraura_session"
 
+// dummyPasswordHash lets loginHandler run exactly one bcrypt comparison
+// whether or not the username exists, so an unknown username takes the
+// same time as a wrong password for a real one — without this, Go's ||
+// short-circuit makes an unknown-username response measurably faster
+// than a wrong-password response, which leaks which usernames exist.
+var dummyPasswordHash = func() []byte {
+	h, err := bcrypt.GenerateFromPassword([]byte("dummy-password-for-constant-time-login"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return h
+}()
+
 func sessionFromContext(ctx context.Context) (Session, bool) {
 	sess, ok := ctx.Value(sessionCtxKey).(Session)
 	return sess, ok
@@ -82,6 +95,7 @@ func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimi
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		var req loginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -89,7 +103,12 @@ func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimi
 		}
 
 		user, ok := users[req.Username]
-		if !ok || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
+		hash := dummyPasswordHash
+		if ok {
+			hash = []byte(user.PasswordHash)
+		}
+		match := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)) == nil
+		if !ok || !match {
 			limiter.RecordFailure(ip)
 			http.Error(w, "Invalid username or password", http.StatusUnauthorized)
 			return
@@ -102,7 +121,7 @@ func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimi
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
-			Secure:   r.TLS != nil,
+			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 		})
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"username": user.Username, "role": user.Role})
@@ -124,7 +143,7 @@ func logoutHandler(store *SessionStore) http.HandlerFunc {
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
-			Secure:   r.TLS != nil,
+			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 			MaxAge:   -1,
 		})
 		w.WriteHeader(http.StatusNoContent)

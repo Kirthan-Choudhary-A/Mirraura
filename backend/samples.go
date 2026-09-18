@@ -40,6 +40,7 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<20) // 64MB, matches nginx's client_max_body_size
 		file, header, err := r.FormFile("sample")
 		if err != nil {
 			http.Error(w, "missing 'sample' file field", http.StatusBadRequest)
