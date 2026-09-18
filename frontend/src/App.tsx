@@ -35,10 +35,6 @@ function App() {
     setRefreshKey((k) => k + 1);
   }
 
-  function handleNewRun() {
-    setEvents([]);
-  }
-
   return (
     <div className="app">
       <header className="app-header">
@@ -49,8 +45,8 @@ function App() {
       </header>
 
       <section className="detonation-zone">
-        <div className="detonation-zone__left" onClickCapture={handleNewRun}>
-          <UploadPanel onVerdict={handleUpload} />
+        <div className="detonation-zone__left">
+          <UploadPanel onVerdict={handleUpload} onUploadStart={() => setEvents([])} />
           <VerdictPanel verdict={verdict} />
         </div>
         <div className="detonation-zone__right">
