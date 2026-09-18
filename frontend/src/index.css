@@ -581,6 +581,49 @@ button:disabled {
   border-color: var(--ink-muted);
 }
 
+/* ---------- Login page ---------- */
+
+.login-page {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-3);
+}
+
+.login-form {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.login-form label {
+  font-size: 13px;
+  color: var(--ink-muted);
+  margin-top: var(--sp-1);
+}
+
+.login-form__hint {
+  font-size: 12px;
+  color: var(--sev-suspicious);
+  margin: 0;
+}
+
+.app-header__user {
+  font-size: 12px;
+  color: var(--ink-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.app-header__logout {
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
 /* ---------- Reduced motion ---------- */
 
 @media (prefers-reduced-motion: reduce) {

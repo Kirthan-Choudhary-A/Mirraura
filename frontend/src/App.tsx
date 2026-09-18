@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { applyLiveEvent, connectLive, fetchMonitorStatus, shouldUpdateSampleVerdict } from "./api";
+import { applyLiveEvent, connectLive, fetchMonitorStatus, logout, me, shouldUpdateSampleVerdict } from "./api";
 import type { ConnectionState } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
 import { EventFeed } from "./components/EventFeed";
+import { LoginPage } from "./components/LoginPage";
 import { MonitorBanner } from "./components/MonitorBanner";
 import { PendingHashApprovals } from "./components/PendingHashApprovals";
 import { UploadPanel } from "./components/UploadPanel";
@@ -10,6 +11,8 @@ import { VerdictPanel } from "./components/VerdictPanel";
 import type { MirraEvent, Verdict } from "./types";
 
 function App() {
+  const [user, setUser] = useState<{ username: string; role: string } | null | undefined>(undefined);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [events, setEvents] = useState<MirraEvent[]>([]);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -18,6 +21,13 @@ function App() {
   const [monitorError, setMonitorError] = useState<string | null>(null);
 
   useEffect(() => {
+    me()
+      .then(setUser)
+      .catch(() => setUser(null));
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
     fetchMonitorStatus()
       .then((s) => {
         setIsolated(s.isolated);
@@ -34,11 +44,34 @@ function App() {
       if (msg.type === "reconnected") setIsolated(false);
     }, setConnState);
     return () => conn.close();
-  }, []);
+  }, [user]);
 
   function handleUpload(v: Verdict) {
     setVerdict(v);
     setRefreshKey((k) => k + 1);
+  }
+
+  async function handleLogout() {
+    await logout().catch(() => {});
+    setUser(null);
+  }
+
+  if (user === undefined) {
+    return null;
+  }
+
+  if (user === null) {
+    return (
+      <>
+        {sessionExpired && <p className="error-text">Your session expired. Please sign in again.</p>}
+        <LoginPage
+          onLogin={(u) => {
+            setSessionExpired(false);
+            setUser(u);
+          }}
+        />
+      </>
+    );
   }
 
   return (
@@ -51,13 +84,26 @@ function App() {
         <p className="app-header__conn-state" data-state={connState}>
           {connState === "live" ? "● Live" : connState === "connecting" ? "○ Connecting…" : "○ Offline — retrying"}
         </p>
+        <p className="app-header__user">
+          {user.username} · {user.role}{" "}
+          <button className="app-header__logout" onClick={handleLogout}>
+            Sign out
+          </button>
+        </p>
       </header>
 
       {monitorError && <p className="error-text">{monitorError}</p>}
 
       <section className="detonation-zone">
         <div className="detonation-zone__left">
-          <UploadPanel onVerdict={handleUpload} onUploadStart={() => setEvents([])} />
+          <UploadPanel
+            onVerdict={handleUpload}
+            onUploadStart={() => setEvents([])}
+            onSessionExpired={() => {
+              setSessionExpired(true);
+              setUser(null);
+            }}
+          />
           <VerdictPanel verdict={verdict} />
         </div>
         <div className="detonation-zone__right">

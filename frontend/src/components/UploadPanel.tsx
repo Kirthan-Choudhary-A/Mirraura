@@ -1,13 +1,15 @@
 import { useRef, useState } from "react";
-import { uploadSample } from "../api";
+import { ApiError, uploadSample } from "../api";
 import type { Verdict } from "../types";
 
 export function UploadPanel({
   onVerdict,
   onUploadStart,
+  onSessionExpired,
 }: {
   onVerdict: (v: Verdict) => void;
   onUploadStart: () => void;
+  onSessionExpired: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -23,6 +25,10 @@ export function UploadPanel({
       const verdict = await uploadSample(file);
       onVerdict(verdict);
     } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        onSessionExpired();
+        return;
+      }
       setError(e instanceof Error ? e.message : "upload failed");
     } finally {
       setBusy(false);
