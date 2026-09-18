@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import List, Tuple
 
 import rule_scorer
-from rule_scorer import verdict_from_score  # re-exported unchanged
 from schemas import Event
 
 _WEIGHTS_PATH = Path(__file__).parent / "trained_weights.json"
@@ -79,3 +78,18 @@ def score_events(events: List[Event]) -> Tuple[float, List[str]]:
     chain = [text for _, _, text in contributions]
 
     return confidence, chain
+
+
+def verdict_from_score(confidence: float, chain: List[str], had_telemetry: bool) -> str:
+    if not had_telemetry:
+        return "Inconclusive"
+    # Unlike rule_scorer's additive score, this sigmoid-based confidence can
+    # only approach 0.0 asymptotically and never hits it exactly, so a
+    # confidence == 0.0 check (rule_scorer's check) would never fire and a
+    # genuinely clean run would always come back "Suspicious". A small
+    # threshold band gives a real Normal outcome instead.
+    if confidence < 0.1:
+        return "Normal"
+    if confidence < 0.6:
+        return "Suspicious"
+    return "Compromised"
