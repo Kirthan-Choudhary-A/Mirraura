@@ -127,3 +127,42 @@ func TestLoadUsersRejectsDuplicateUsername(t *testing.T) {
 		t.Fatal("expected an error for a users.json entry colliding with the env-seeded admin username")
 	}
 }
+
+func TestLoadUsersRejectsInvalidRole(t *testing.T) {
+	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
+	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.json")
+	hash, _ := bcrypt.GenerateFromPassword([]byte("whatever12345"), bcrypt.DefaultCost)
+	entries := []map[string]string{
+		{"username": "bob", "bcrypt_hash": string(hash), "role": "superadmin"},
+	}
+	data, _ := json.Marshal(entries)
+	os.WriteFile(path, data, 0644)
+	withEnv(t, "MIRRAURA_USERS_PATH", path)
+
+	if _, err := loadUsers(); err == nil {
+		t.Fatal("expected an error for a users.json entry with an invalid role")
+	}
+}
+
+func TestLoadUsersRejectsDuplicateUsernameWithinUsersJSON(t *testing.T) {
+	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
+	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.json")
+	hash, _ := bcrypt.GenerateFromPassword([]byte("whatever12345"), bcrypt.DefaultCost)
+	entries := []map[string]string{
+		{"username": "alice", "bcrypt_hash": string(hash), "role": "analyst"},
+		{"username": "alice", "bcrypt_hash": string(hash), "role": "analyst"},
+	}
+	data, _ := json.Marshal(entries)
+	os.WriteFile(path, data, 0644)
+	withEnv(t, "MIRRAURA_USERS_PATH", path)
+
+	if _, err := loadUsers(); err == nil {
+		t.Fatal("expected an error for duplicate usernames within users.json")
+	}
+}

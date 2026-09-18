@@ -102,6 +102,8 @@ See "The loop, in one sentence each" and "The continuous-monitoring loop, in one
 
 **docker/docker (Go)** — The official Docker Engine SDK for Go; used instead of hand-rolling raw HTTP calls to the Docker socket, since container/network lifecycle management (create, start, exec, copy files in, teardown) is exactly what it's built for. The detonation container it creates is hardened (dropped capabilities except SYS_PTRACE for strace, read-only rootfs, memory/PID limits, no-new-privileges) since it's the one place Mirraura intentionally runs untrusted code.
 
+**golang.org/x/crypto/bcrypt (Go)** — Industry-standard adaptive password hashing (not a fast general-purpose hash like SHA-256, which would make brute-forcing a stolen password database cheap). Used to store the admin password (and any `users.json` entries) as a hash, never plaintext, and to check a login attempt in constant time relative to the stored hash.
+
 **Vite + Vitest (frontend)** — Vite for a fast dev server and build (React + TypeScript template); Vitest (Vite-native test runner) for the one meaningful frontend unit test (the API client's request/response shapes) — no separate test-runner config needed since it shares Vite's setup.
 
 **WebSocket (protocol, used by gorilla/websocket + the browser's native `WebSocket` API)** — A persistent two-way connection between backend and frontend, so the dashboard shows events and verdicts *as they happen* during a run instead of the user having to refresh.

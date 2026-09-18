@@ -23,8 +23,11 @@ type userJSONEntry struct {
 func loadUsers() (map[string]User, error) {
 	adminUser := os.Getenv("MIRRAURA_ADMIN_USER")
 	adminPassword := os.Getenv("MIRRAURA_ADMIN_PASSWORD")
-	if adminUser == "" || len(adminPassword) < 12 {
-		return nil, fmt.Errorf("MIRRAURA_ADMIN_USER and MIRRAURA_ADMIN_PASSWORD (12+ chars) must both be set")
+	if adminUser == "" {
+		return nil, fmt.Errorf("MIRRAURA_ADMIN_USER must be set")
+	}
+	if len(adminPassword) < 12 {
+		return nil, fmt.Errorf("MIRRAURA_ADMIN_PASSWORD must be at least 12 characters")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 	if err != nil {
