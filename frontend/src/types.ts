@@ -29,6 +29,7 @@ export interface MirraEvent {
 export interface Verdict {
   verdict_id: string;
   sample_hash: string;
+  sample_filename: string;
   verdict: "Normal" | "Suspicious" | "Compromised" | "Inconclusive";
   confidence: number;
   causal_chain: string[];

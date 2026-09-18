@@ -18,13 +18,14 @@ type FileRef struct {
 }
 
 type Verdict struct {
-	VerdictID   string   `json:"verdict_id"`
-	SampleHash  string   `json:"sample_hash"`
-	Verdict     string   `json:"verdict"`
-	Confidence  float64  `json:"confidence"`
-	CausalChain []string `json:"causal_chain"`
-	Timestamp   string   `json:"timestamp"`
-	PrevLogHash string   `json:"prev_log_hash"`
+	VerdictID      string   `json:"verdict_id"`
+	SampleHash     string   `json:"sample_hash"`
+	SampleFilename string   `json:"sample_filename"`
+	Verdict        string   `json:"verdict"`
+	Confidence     float64  `json:"confidence"`
+	CausalChain    []string `json:"causal_chain"`
+	Timestamp      string   `json:"timestamp"`
+	PrevLogHash    string   `json:"prev_log_hash"`
 }
 
 type Broadcaster interface {

@@ -93,7 +93,7 @@ func (mon *Monitor) Tick(ctx context.Context) error {
 	sum := sha256.Sum256(batch)
 	batchHash := hex.EncodeToString(sum[:])
 
-	verdict, err := scoreWithVerdictEngine(mon.verdictEngineURL, batchHash, "monitor", events)
+	verdict, err := scoreWithVerdictEngine(mon.verdictEngineURL, batchHash, "", "monitor", events)
 	if err != nil {
 		return fmt.Errorf("scoring failed: %w", err)
 	}

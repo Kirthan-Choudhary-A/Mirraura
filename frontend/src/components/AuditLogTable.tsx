@@ -33,6 +33,7 @@ export function AuditLogTable({ refreshKey }: { refreshKey: number }) {
           <thead>
             <tr>
               <th>Timestamp</th>
+              <th>File</th>
               <th>Sample Hash / Device</th>
               <th>Verdict / Action</th>
               <th>Confidence</th>
@@ -46,6 +47,7 @@ export function AuditLogTable({ refreshKey }: { refreshKey: number }) {
               return (
                 <tr key={key}>
                   <td className="mono">{v.timestamp}</td>
+                  <td className="mono">{v.action ? "—" : v.sample_filename || "—"}</td>
                   <td className="mono">
                     {v.action
                       ? v.device_id

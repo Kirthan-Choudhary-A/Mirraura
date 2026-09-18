@@ -27,6 +27,16 @@ export function VerdictPanel({ verdict }: { verdict: Verdict | null }) {
       >
         <p className="verdict-readout">{verdict.verdict}</p>
         <p className="verdict-confidence">{(verdict.confidence * 100).toFixed(0)}% confidence</p>
+        <dl className="verdict-meta">
+          <dt>File</dt>
+          <dd className="mono">{verdict.sample_filename || "—"}</dd>
+          <dt>SHA-256</dt>
+          <dd className="mono" title={verdict.sample_hash}>{verdict.sample_hash}</dd>
+          <dt>Verdict ID</dt>
+          <dd className="mono">{verdict.verdict_id}</dd>
+          <dt>Detonated</dt>
+          <dd className="mono">{verdict.timestamp}</dd>
+        </dl>
         <h3>Causal chain</h3>
         <ul className="causal-list">
           {verdict.causal_chain.map((reason, i) => (
