@@ -1,0 +1,55 @@
+.confirm-dialog {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--sp-4);
+  max-width: 420px;
+  width: calc(100% - var(--sp-6));
+}
+
+.confirm-dialog::backdrop {
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+
+.confirm-dialog__title {
+  margin: 0 0 var(--sp-2);
+}
+
+.confirm-dialog__description {
+  color: var(--text-muted);
+  font-size: var(--fs-3);
+  margin-bottom: var(--sp-4);
+}
+
+.confirm-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+.confirm-dialog__cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  padding: 6px var(--sp-3);
+}
+
+.confirm-dialog__cancel:hover {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.confirm-dialog__confirm {
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 6px var(--sp-3);
+  font-weight: 600;
+}
+
+.confirm-dialog__confirm:hover {
+  filter: brightness(1.08);
+}
