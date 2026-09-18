@@ -21,11 +21,13 @@ export async function uploadSample(file: File): Promise<Verdict> {
 
 export async function fetchVerdicts(): Promise<Verdict[]> {
   const res = await fetch(`${BASE}/api/verdicts`);
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 export async function fetchMonitorStatus(): Promise<{ isolated: boolean }> {
   const res = await fetch(`${BASE}/api/monitor/status`);
+  if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 

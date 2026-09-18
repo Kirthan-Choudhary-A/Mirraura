@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { approveHash, fetchHashes, fetchVerdicts, rejectHash, uploadSample } from "./api";
+import { approveHash, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
 import { applyLiveEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import type { MirraEvent, Verdict } from "./types";
 
@@ -26,6 +26,16 @@ describe("api", () => {
     const result = await fetchVerdicts();
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/verdicts"));
     expect(result).toEqual([{ verdict_id: "v1" }]);
+  });
+
+  it("fetchVerdicts throws when the response is not ok", async () => {
+    (fetch as any).mockResolvedValue({ ok: false, text: async () => "boom" });
+    await expect(fetchVerdicts()).rejects.toThrow("boom");
+  });
+
+  it("fetchMonitorStatus throws when the response is not ok", async () => {
+    (fetch as any).mockResolvedValue({ ok: false, text: async () => "boom" });
+    await expect(fetchMonitorStatus()).rejects.toThrow("boom");
   });
 
   it("uploadSample posts multipart form data and returns the verdict", async () => {

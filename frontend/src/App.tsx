@@ -15,11 +15,15 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [isolated, setIsolated] = useState(false);
   const [connState, setConnState] = useState<ConnectionState>("connecting");
+  const [monitorError, setMonitorError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMonitorStatus()
-      .then((s) => setIsolated(s.isolated))
-      .catch(() => {});
+      .then((s) => {
+        setIsolated(s.isolated);
+        setMonitorError(null);
+      })
+      .catch((e) => setMonitorError(e instanceof Error ? e.message : "failed to load monitor status"));
     const conn = connectLive((msg) => {
       setEvents((prev) => applyLiveEvent(prev, msg));
       if (shouldUpdateSampleVerdict(msg)) {
@@ -48,6 +52,8 @@ function App() {
           {connState === "live" ? "● Live" : connState === "connecting" ? "○ Connecting…" : "○ Offline — retrying"}
         </p>
       </header>
+
+      {monitorError && <p className="error-text">{monitorError}</p>}
 
       <section className="detonation-zone">
         <div className="detonation-zone__left">
