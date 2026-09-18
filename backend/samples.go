@@ -107,7 +107,8 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 		}
 		timedOut := sensorCtx.Err() != nil
 
-		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, safeFilename, "sample", timedOut, events)
+		actor, _ := sessionFromContext(r.Context())
+		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, safeFilename, "sample", actor.Username, timedOut, events)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("scoring failed: %v", err), http.StatusInternalServerError)
 			return
@@ -119,13 +120,14 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 	}
 }
 
-func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source string, timedOut bool, events []json.RawMessage) (*Verdict, error) {
+func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor string, timedOut bool, events []json.RawMessage) (*Verdict, error) {
 	body, err := json.Marshal(map[string]any{
 		"sample_hash":     sampleHash,
 		"sample_filename": sampleFilename,
 		"timed_out":       timedOut,
 		"events":          events,
 		"source":          source,
+		"actor":           actor,
 	})
 	if err != nil {
 		return nil, err

@@ -239,6 +239,15 @@ def test_score_writes_event_archive_entry():
     assert matches[0]["events"][0]["event_id"] == "e1"
 
 
+def test_score_records_actor_in_audit_log():
+    resp = client.post(
+        "/score",
+        json={"sample_hash": "9" * 64, "events": [], "actor": "alice"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["actor"] == "alice"
+
+
 def test_archive_write_failure_does_not_break_score(monkeypatch):
     def boom(record):
         raise OSError("disk full")

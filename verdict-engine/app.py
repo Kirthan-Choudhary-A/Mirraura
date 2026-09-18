@@ -34,6 +34,7 @@ class ScoreRequest(BaseModel):
     sample_hash: str
     sample_filename: str = ""
     timed_out: bool = False
+    actor: str = ""
     events: List[Event] = []
     # "sample" = uploaded file (sample_hash is a real file identity, eligible for
     # auto-propose); "monitor" = continuous-monitoring event batch (the hash is of
@@ -97,6 +98,7 @@ def score(req: ScoreRequest):
         "verdict_id": verdict_id,
         "sample_hash": req.sample_hash,
         "sample_filename": req.sample_filename,
+        "actor": req.actor,
         "verdict": verdict,
         "confidence": confidence,
         "causal_chain": chain,

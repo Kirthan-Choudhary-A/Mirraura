@@ -37,6 +37,7 @@ class Verdict(BaseModel):
     verdict_id: str
     sample_hash: str
     sample_filename: str = ""
+    actor: str = ""
     verdict: Literal["Normal", "Suspicious", "Compromised", "Inconclusive"]
     confidence: float
     causal_chain: List[str]
