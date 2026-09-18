@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { connectLive, fetchMonitorStatus } from "./api";
+import { applyLiveEvent, connectLive, fetchMonitorStatus, shouldUpdateSampleVerdict } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
 import { EventFeed } from "./components/EventFeed";
 import { MonitorBanner } from "./components/MonitorBanner";
@@ -19,11 +19,11 @@ function App() {
       .then((s) => setIsolated(s.isolated))
       .catch(() => {});
     const ws = connectLive((msg) => {
-      if (msg.type === "event") setEvents((prev) => [...prev, msg.data]);
-      if (msg.type === "verdict") {
+      setEvents((prev) => applyLiveEvent(prev, msg));
+      if (shouldUpdateSampleVerdict(msg)) {
         setVerdict(msg.data);
-        setRefreshKey((k) => k + 1);
       }
+      if (msg.type === "verdict") setRefreshKey((k) => k + 1);
       if (msg.type === "isolated") setIsolated(true);
       if (msg.type === "reconnected") setIsolated(false);
     });

@@ -60,10 +60,26 @@ export async function rejectHash(hash: string): Promise<void> {
 }
 
 export type LiveMessage =
-  | { type: "event"; data: MirraEvent }
-  | { type: "verdict"; data: Verdict }
+  | { type: "event"; source: "sample" | "monitor"; data: MirraEvent }
+  | { type: "verdict"; source: "sample" | "monitor"; data: Verdict }
   | { type: "isolated" }
   | { type: "reconnected" };
+
+const MAX_EVENTS = 500;
+
+// Only the shadow-run feed is rendered today (App.tsx); monitor-loop events
+// are received but not yet shown anywhere (Part 3 adds that tab), so they're
+// filtered out here rather than mixed into the same list.
+export function applyLiveEvent(events: MirraEvent[], msg: LiveMessage): MirraEvent[] {
+  if (msg.type !== "event" || msg.source !== "sample") return events;
+  return [...events, msg.data].slice(-MAX_EVENTS);
+}
+
+export function shouldUpdateSampleVerdict(
+  msg: LiveMessage
+): msg is Extract<LiveMessage, { type: "verdict" }> {
+  return msg.type === "verdict" && msg.source === "sample";
+}
 
 export function connectLive(onMessage: (msg: LiveMessage) => void): WebSocket {
   const wsUrl = BASE.replace(/^http/, "ws") + "/api/live";
