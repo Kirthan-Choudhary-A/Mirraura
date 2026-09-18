@@ -37,10 +37,21 @@ func (m *DockerManager) CreateShadowNetwork(ctx context.Context, name string) (s
 }
 
 func (m *DockerManager) StartShadowContainer(ctx context.Context, image, networkID, name string) (string, error) {
+	one := int64(128)
 	resp, err := m.cli.ContainerCreate(
 		ctx,
 		&container.Config{Image: image, Cmd: []string{"sleep", "infinity"}},
-		nil,
+		&container.HostConfig{
+			Resources: container.Resources{
+				Memory:     256 * 1024 * 1024,
+				PidsLimit:  &one,
+			},
+			CapDrop:        []string{"ALL"},
+			CapAdd:         []string{"SYS_PTRACE"}, // strace needs this to trace the sample
+			SecurityOpt:    []string{"no-new-privileges"},
+			ReadonlyRootfs: true,
+			Tmpfs:          map[string]string{"/tmp": ""},
+		},
 		&network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
 				networkID: {},
