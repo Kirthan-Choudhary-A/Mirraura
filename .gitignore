@@ -17,3 +17,5 @@ verdict-engine/revalidation_reports/*.json
 verdict-engine/training_reports/*.txt
 !verdict-engine/training_reports/.gitkeep
 sensor/target/
+.worktrees/
+.superpowers/
