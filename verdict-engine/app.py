@@ -45,6 +45,7 @@ class ScoreRequest(BaseModel):
 class ActionRequest(BaseModel):
     action: str
     device_id: str
+    actor: str = ""
 
 
 class HashSubmitRequest(BaseModel):
@@ -152,6 +153,7 @@ def log_action(req: ActionRequest):
         "record_id": str(uuid.uuid4()),
         "device_id": req.device_id,
         "action": req.action,
+        "actor": req.actor,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     return _strip_entry_hash(audit_log.append(record))

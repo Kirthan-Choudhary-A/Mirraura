@@ -98,6 +98,21 @@ def test_log_action_appends_to_audit_log():
     )
 
 
+def test_log_action_records_actor():
+    resp = client.post(
+        "/audit/action",
+        json={"action": "reconnected", "device_id": "monitored-endpoint", "actor": "alice"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["actor"] == "alice"
+
+    listed = client.get("/verdicts").json()
+    assert any(
+        r.get("action") == "reconnected" and r.get("actor") == "alice"
+        for r in listed
+    )
+
+
 def _compromised_events():
     return [
         {

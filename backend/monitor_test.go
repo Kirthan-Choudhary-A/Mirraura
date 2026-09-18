@@ -105,7 +105,7 @@ func TestTickDoesNotReIsolateWhenAlreadyIsolated(t *testing.T) {
 func TestReconnectFailsWhenNotIsolated(t *testing.T) {
 	fd := &fakeMonitorDocker{}
 	mon := NewMonitor(fd, "http://unused", &fakeBroadcaster{})
-	if err := mon.Reconnect(context.Background()); err != errNotIsolated {
+	if err := mon.Reconnect(context.Background(), "alice"); err != errNotIsolated {
 		t.Fatalf("expected errNotIsolated, got %v", err)
 	}
 }
@@ -137,7 +137,7 @@ func TestReconnectClearsIsolatedFlag(t *testing.T) {
 	if err := mon.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if err := mon.Reconnect(context.Background()); err != nil {
+	if err := mon.Reconnect(context.Background(), "alice"); err != nil {
 		t.Fatalf("Reconnect: %v", err)
 	}
 	if mon.IsIsolated() {
@@ -145,5 +145,33 @@ func TestReconnectClearsIsolatedFlag(t *testing.T) {
 	}
 	if fd.reconnectCalls != 1 {
 		t.Fatalf("expected 1 reconnect call, got %d", fd.reconnectCalls)
+	}
+}
+
+func TestReconnectSendsActorToAuditLog(t *testing.T) {
+	fd := &fakeMonitorDocker{pollLines: []string{`{"event_type":"process_spawn"}`}}
+	var gotActor string
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/audit/action" {
+			var body map[string]string
+			json.NewDecoder(r.Body).Decode(&body)
+			gotActor = body["actor"]
+			w.Write([]byte(`{}`))
+			return
+		}
+		json.NewEncoder(w).Encode(Verdict{VerdictID: "v1", Verdict: "Compromised", Confidence: 1.0})
+	}))
+	defer engine.Close()
+
+	mon := NewMonitor(fd, engine.URL, &fakeBroadcaster{})
+	if err := mon.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if err := mon.Reconnect(context.Background(), "alice"); err != nil {
+		t.Fatalf("Reconnect: %v", err)
+	}
+	if gotActor != "alice" {
+		t.Fatalf("expected actor=alice recorded on reconnect, got %q", gotActor)
 	}
 }
