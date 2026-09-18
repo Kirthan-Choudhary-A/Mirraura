@@ -109,3 +109,37 @@ func TestShadowContainerIsHardened(t *testing.T) {
 		t.Errorf("expected a /samples tmpfs mount, got %v", hc.Tmpfs)
 	}
 }
+
+func TestExecAndStreamStopsWhenContextCanceled(t *testing.T) {
+	dm, err := NewDockerManager()
+	if err != nil {
+		t.Fatalf("NewDockerManager: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	networkID, err := dm.CreateShadowNetwork(ctx, "mirraura-timeout-test-net")
+	if err != nil {
+		t.Fatalf("CreateShadowNetwork: %v", err)
+	}
+	containerID, err := dm.StartShadowContainer(ctx, "alpine:3.19", networkID, "mirraura-timeout-test-container")
+	if err != nil {
+		t.Fatalf("StartShadowContainer: %v", err)
+	}
+	defer dm.Teardown(context.Background(), containerID, networkID)
+
+	execCtx, execCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer execCancel()
+
+	lines, err := dm.execAndStream(execCtx, containerID, []string{"sleep", "60"})
+	if err != nil {
+		t.Fatalf("execAndStream: %v", err)
+	}
+
+	start := time.Now()
+	for range lines {
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("expected stream to stop shortly after the 2s context deadline, took %v", elapsed)
+	}
+}

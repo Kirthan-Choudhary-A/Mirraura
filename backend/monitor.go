@@ -83,7 +83,7 @@ func (mon *Monitor) Tick(ctx context.Context) error {
 	}
 
 	for _, e := range events {
-		mon.hub.Broadcast(map[string]any{"type": "event", "data": e})
+		mon.hub.Broadcast(map[string]any{"type": "event", "source": "monitor", "data": e})
 	}
 
 	batch, err := json.Marshal(events)
@@ -93,11 +93,11 @@ func (mon *Monitor) Tick(ctx context.Context) error {
 	sum := sha256.Sum256(batch)
 	batchHash := hex.EncodeToString(sum[:])
 
-	verdict, err := scoreWithVerdictEngine(mon.verdictEngineURL, batchHash, "", "monitor", events)
+	verdict, err := scoreWithVerdictEngine(mon.verdictEngineURL, batchHash, "", "monitor", false, events)
 	if err != nil {
 		return fmt.Errorf("scoring failed: %w", err)
 	}
-	mon.hub.Broadcast(map[string]any{"type": "verdict", "data": verdict})
+	mon.hub.Broadcast(map[string]any{"type": "verdict", "source": "monitor", "data": verdict})
 
 	if verdict.Verdict != "Compromised" {
 		return nil

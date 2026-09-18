@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 class ScoreRequest(BaseModel):
     sample_hash: str
     sample_filename: str = ""
+    timed_out: bool = False
     events: List[Event] = []
     # "sample" = uploaded file (sample_hash is a real file identity, eligible for
     # auto-propose); "monitor" = continuous-monitoring event batch (the hash is of
@@ -68,6 +69,12 @@ def score(req: ScoreRequest):
             "Compromised",
             1.0,
             [f"sample hash matches known-bad entry '{known_bad_label}'"],
+        )
+    elif req.timed_out:
+        verdict, confidence, chain = (
+            "Inconclusive",
+            0.0,
+            ["sample detonation aborted: sensor exceeded its execution timeout"],
         )
     else:
         confidence, chain = score_events(req.events)

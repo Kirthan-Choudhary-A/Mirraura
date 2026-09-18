@@ -32,12 +32,30 @@ func TestScoreWithVerdictEngine(t *testing.T) {
 	}))
 	defer fakeEngine.Close()
 
-	v, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", nil)
+	v, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if v.VerdictID != "v1" {
 		t.Fatalf("expected verdict id v1, got %s", v.VerdictID)
+	}
+}
+
+func TestScoreWithVerdictEngineSendsTimedOutFlag(t *testing.T) {
+	var gotBody map[string]any
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Verdict{VerdictID: "v1", Verdict: "Inconclusive"})
+	}))
+	defer fakeEngine.Close()
+
+	_, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", true, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotBody["timed_out"] != true {
+		t.Fatalf("expected timed_out=true in request body, got %v", gotBody["timed_out"])
 	}
 }
 

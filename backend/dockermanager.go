@@ -116,6 +116,16 @@ func (m *DockerManager) execAndStream(ctx context.Context, containerID string, c
 			}
 		}
 	}()
+
+	// ctx's deadline isn't otherwise enforced once the attach connection is
+	// established, so a hung or slow-running command would keep streaming
+	// past it. Closing the connection here forces the scan loop above to
+	// exit and the channel to close.
+	go func() {
+		<-ctx.Done()
+		attach.Close()
+	}()
+
 	return lines, nil
 }
 

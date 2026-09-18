@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,12 @@ import (
 )
 
 const shadowImage = "mirraura-shadow:latest"
+
+// sensorTimeout bounds a single detonation run; if the sensor hasn't
+// finished by then, execAndStream force-closes its exec stream (see
+// dockermanager.go) and the run is scored as Inconclusive instead of
+// hanging the HTTP request.
+const sensorTimeout = 30 * time.Second
 
 // httpClient is shared by scoreWithVerdictEngine and logAction so a hung
 // verdict-engine call can't block Tick (and therefore the ticker) forever.
@@ -80,7 +87,10 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			return
 		}
 
-		lines, err := dm.RunSensor(ctx, containerID, "/samples/"+safeFilename)
+		sensorCtx, sensorCancel := context.WithTimeout(ctx, sensorTimeout)
+		defer sensorCancel()
+
+		lines, err := dm.RunSensor(sensorCtx, containerID, "/samples/"+safeFilename)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("sensor run failed: %v", err), http.StatusInternalServerError)
 			return
@@ -93,26 +103,28 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 				continue
 			}
 			raw := json.RawMessage(line)
-			hub.Broadcast(map[string]any{"type": "event", "data": raw})
+			hub.Broadcast(map[string]any{"type": "event", "source": "sample", "data": raw})
 			events = append(events, raw)
 		}
+		timedOut := errors.Is(sensorCtx.Err(), context.DeadlineExceeded)
 
-		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, safeFilename, "sample", events)
+		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, safeFilename, "sample", timedOut, events)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("scoring failed: %v", err), http.StatusInternalServerError)
 			return
 		}
-		hub.Broadcast(map[string]any{"type": "verdict", "data": verdict})
+		hub.Broadcast(map[string]any{"type": "verdict", "source": "sample", "data": verdict})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(verdict)
 	}
 }
 
-func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source string, events []json.RawMessage) (*Verdict, error) {
+func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source string, timedOut bool, events []json.RawMessage) (*Verdict, error) {
 	body, err := json.Marshal(map[string]any{
 		"sample_hash":     sampleHash,
 		"sample_filename": sampleFilename,
+		"timed_out":       timedOut,
 		"events":          events,
 		"source":          source,
 	})

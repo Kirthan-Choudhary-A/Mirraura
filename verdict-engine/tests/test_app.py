@@ -40,6 +40,18 @@ def test_score_no_events_is_inconclusive():
     assert body["verdict"] == "Inconclusive"
 
 
+def test_score_timed_out_is_inconclusive_with_reason():
+    resp = client.post(
+        "/score",
+        json={"sample_hash": "8" * 64, "events": [], "timed_out": True},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["verdict"] == "Inconclusive"
+    assert body["confidence"] == 0.0
+    assert "execution timeout" in body["causal_chain"][0]
+
+
 def test_score_odd_port_is_suspicious():
     events = [
         {
