@@ -9,56 +9,77 @@ export type HashEntry = {
   reviewed_at: string | null;
 };
 
-const BASE = import.meta.env.VITE_BACKEND_URL || "http://localhost:8080";
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, { ...init, credentials: "same-origin" });
+  if (!res.ok) {
+    throw new ApiError(await res.text(), res.status);
+  }
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  return res.json();
+}
+
+export async function login(username: string, password: string): Promise<{ username: string; role: string }> {
+  return request("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  await request("/api/logout", { method: "POST" });
+}
+
+export async function me(): Promise<{ username: string; role: string }> {
+  return request("/api/me");
+}
 
 export async function uploadSample(file: File): Promise<Verdict> {
   const form = new FormData();
   form.append("sample", file);
-  const res = await fetch(`${BASE}/api/samples`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  return request("/api/samples", { method: "POST", body: form });
 }
 
 export async function fetchVerdicts(): Promise<Verdict[]> {
-  const res = await fetch(`${BASE}/api/verdicts`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  return request("/api/verdicts");
 }
 
 export async function fetchMonitorStatus(): Promise<{ isolated: boolean }> {
-  const res = await fetch(`${BASE}/api/monitor/status`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  return request("/api/monitor/status");
 }
 
 export async function reconnectMonitor(): Promise<void> {
-  const res = await fetch(`${BASE}/api/monitor/reconnect`, { method: "POST" });
-  if (!res.ok) throw new Error(await res.text());
+  await request("/api/monitor/reconnect", { method: "POST" });
 }
 
 export async function fetchHashes(): Promise<HashEntry[]> {
-  const res = await fetch(`${BASE}/api/hashes`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+  return request("/api/hashes");
 }
 
 export async function submitHash(hash: string, label: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/hashes`, {
+  await request("/api/hashes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ hash, label }),
   });
-  if (!res.ok) throw new Error(await res.text());
 }
 
 export async function approveHash(hash: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/hashes/${hash}/approve`, { method: "POST" });
-  if (!res.ok) throw new Error(await res.text());
+  await request(`/api/hashes/${hash}/approve`, { method: "POST" });
 }
 
 export async function rejectHash(hash: string): Promise<void> {
-  const res = await fetch(`${BASE}/api/hashes/${hash}/reject`, { method: "POST" });
-  if (!res.ok) throw new Error(await res.text());
+  await request(`/api/hashes/${hash}/reject`, { method: "POST" });
 }
 
 export type LiveMessage =
@@ -103,7 +124,7 @@ export function connectLive(
   function connect() {
     if (closed) return;
     onStatus("connecting");
-    const wsUrl = BASE.replace(/^http/, "ws") + "/api/live";
+    const wsUrl = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/api/live";
     ws = new WebSocket(wsUrl);
     ws.onopen = () => {
       backoff = INITIAL_BACKOFF_MS;
