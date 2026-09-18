@@ -112,6 +112,20 @@ No public sign-up — this is a security tool, not a public service. Exactly one
 
 **Vite + Vitest (frontend)** — Vite for a fast dev server and build (React + TypeScript template); Vitest (Vite-native test runner) for the one meaningful frontend unit test (the API client's request/response shapes) — no separate test-runner config needed since it shares Vite's setup.
 
+**lucide-react** — A tree-shakeable icon set as React components (not an
+icon font or an SVG-sprite build step). Used for every icon in the
+redesigned dashboard (event types, verdict badges, the isolation banner,
+theme toggle) instead of hand-drawn inline SVGs, since a consistent
+stroke-width icon family reads as one visual system rather than a pile of
+one-off shapes.
+
+**@fontsource-variable/inter & @fontsource-variable/jetbrains-mono** —
+Self-hosted variable-font packages (the font files ship in the built
+bundle, not fetched from a CDN at runtime). Chosen over the Google Fonts
+CDN links Part 1 shipped with, specifically so the dashboard works fully
+offline and so the CSP introduced in Part 2 (`default-src 'self'`) never
+has to carve out an exception for a third-party font host.
+
 **WebSocket (protocol, used by gorilla/websocket + the browser's native `WebSocket` API)** — A persistent two-way connection between backend and frontend, so the dashboard shows events and verdicts *as they happen* during a run instead of the user having to refresh.
 
 **procps (`ps`) / iproute2 (`ss`) (continuous monitoring, inside `monitored-endpoint`)** — Standard Linux utilities for listing running processes and open network connections/sockets, respectively. Present in essentially every Linux distribution already — no custom monitoring agent needed, just shell out to tools that already know how to answer "what's running right now" and "what's connected right now."
