@@ -50,7 +50,7 @@ func (m *DockerManager) StartShadowContainer(ctx context.Context, image, network
 			CapAdd:         []string{"SYS_PTRACE"}, // strace needs this to trace the sample
 			SecurityOpt:    []string{"no-new-privileges"},
 			ReadonlyRootfs: true,
-			Tmpfs:          map[string]string{"/tmp": ""},
+			Tmpfs:          map[string]string{"/tmp": "", "/samples": ""},
 		},
 		&network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
