@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -18,7 +19,17 @@ func NewHub() *Hub {
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			// Non-browser clients (curl, server-to-server health checks) send no
+			// Origin header at all; browsers always send one, so this only
+			// affects non-browser callers, which this check isn't meant to stop.
+			return true
+		}
+		u, err := url.Parse(origin)
+		return err == nil && u.Host == r.Host
+	},
 }
 
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
