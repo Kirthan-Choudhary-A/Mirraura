@@ -102,11 +102,11 @@ func TestShadowContainerIsHardened(t *testing.T) {
 	if !hc.ReadonlyRootfs {
 		t.Error("expected ReadonlyRootfs true")
 	}
-	if _, ok := hc.Tmpfs["/tmp"]; !ok {
-		t.Errorf("expected a /tmp tmpfs mount, got %v", hc.Tmpfs)
+	if hc.Tmpfs["/tmp"] != "exec" {
+		t.Errorf("expected /tmp tmpfs mounted exec, got %q", hc.Tmpfs["/tmp"])
 	}
-	if _, ok := hc.Tmpfs["/samples"]; !ok {
-		t.Errorf("expected a /samples tmpfs mount, got %v", hc.Tmpfs)
+	if hc.Tmpfs["/samples"] != "exec" {
+		t.Errorf("expected /samples tmpfs mounted exec, got %q", hc.Tmpfs["/samples"])
 	}
 }
 

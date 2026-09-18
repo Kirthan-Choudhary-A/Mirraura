@@ -55,14 +55,21 @@ def run_archive(archive_entries: List[dict], candidate_module) -> List[dict]:
         # the first place (see app.py's score() handler), so there's nothing
         # honest to diff it against — re-scoring its events and comparing to
         # verdict_at_capture would report a meaningless "flip" on every entry.
-        if entry.get("known_bad_match"):
+        # Same reasoning applies to a timed-out run: its "Inconclusive" verdict
+        # is assigned by fiat, not produced by score_events().
+        if entry.get("known_bad_match") or entry.get("timed_out"):
+            skipped_reason = (
+                "hash short-circuit, not scored"
+                if entry.get("known_bad_match")
+                else "timed out, not scored"
+            )
             results.append(
                 {
                     "verdict_id": entry["verdict_id"],
                     "sample_hash": entry["sample_hash"],
                     "source": entry["source"],
                     "before_verdict": entry.get("verdict_at_capture"),
-                    "skipped": "hash short-circuit, not scored",
+                    "skipped": skipped_reason,
                 }
             )
             continue

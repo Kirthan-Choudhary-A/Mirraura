@@ -115,6 +115,7 @@ def score(req: ScoreRequest):
                 "verdict_at_capture": verdict,
                 "confidence_at_capture": confidence,
                 "known_bad_match": bool(known_bad_label),
+                "timed_out": req.timed_out,
                 "timestamp": record["timestamp"],
             }
         )

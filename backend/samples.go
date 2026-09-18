@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -106,7 +105,7 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			hub.Broadcast(map[string]any{"type": "event", "source": "sample", "data": raw})
 			events = append(events, raw)
 		}
-		timedOut := errors.Is(sensorCtx.Err(), context.DeadlineExceeded)
+		timedOut := sensorCtx.Err() != nil
 
 		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, safeFilename, "sample", timedOut, events)
 		if err != nil {
