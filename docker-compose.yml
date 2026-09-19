@@ -3,20 +3,20 @@ name: mirraura
 services:
   backend:
     build: ./backend
-    ports:
-      - "${BACKEND_PORT:-8080}:8080"
     environment:
       - BACKEND_PORT=8080
       - VERDICT_ENGINE_URL=http://verdict-engine:8000
+      - MIRRAURA_ADMIN_USER=${MIRRAURA_ADMIN_USER}
+      - MIRRAURA_ADMIN_PASSWORD=${MIRRAURA_ADMIN_PASSWORD}
+      - MIRRAURA_USERS_PATH=${MIRRAURA_USERS_PATH:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./users.json:/app/users.json:ro
     depends_on:
       - verdict-engine
 
   verdict-engine:
     build: ./verdict-engine
-    ports:
-      - "${VERDICT_ENGINE_PORT:-8000}:8000"
     environment:
       - AUDIT_LOG_PATH=/data/audit_log.jsonl
       - KNOWN_BAD_HASHES_PATH=/data/known_bad_hashes.json
@@ -29,9 +29,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
-    environment:
-      - VITE_BACKEND_URL=http://localhost:${BACKEND_PORT:-8080}
+      - "${FRONTEND_PORT:-5173}:80"
     depends_on:
       - backend
 

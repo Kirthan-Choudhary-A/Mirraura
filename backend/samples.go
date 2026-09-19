@@ -40,6 +40,7 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<20) // 64MB, matches nginx's client_max_body_size
 		file, header, err := r.FormFile("sample")
 		if err != nil {
 			http.Error(w, "missing 'sample' file field", http.StatusBadRequest)
@@ -107,7 +108,8 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 		}
 		timedOut := sensorCtx.Err() != nil
 
-		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, safeFilename, "sample", timedOut, events)
+		actor, _ := sessionFromContext(r.Context())
+		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, safeFilename, "sample", actor.Username, timedOut, events)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("scoring failed: %v", err), http.StatusInternalServerError)
 			return
@@ -119,13 +121,14 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 	}
 }
 
-func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source string, timedOut bool, events []json.RawMessage) (*Verdict, error) {
+func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor string, timedOut bool, events []json.RawMessage) (*Verdict, error) {
 	body, err := json.Marshal(map[string]any{
 		"sample_hash":     sampleHash,
 		"sample_filename": sampleFilename,
 		"timed_out":       timedOut,
 		"events":          events,
 		"source":          source,
+		"actor":           actor,
 	})
 	if err != nil {
 		return nil, err

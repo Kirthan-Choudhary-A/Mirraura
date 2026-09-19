@@ -18,7 +18,8 @@ func monitorReconnectHandler(mon *Monitor) http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if err := mon.Reconnect(r.Context()); err != nil {
+		actor, _ := sessionFromContext(r.Context())
+		if err := mon.Reconnect(r.Context(), actor.Username); err != nil {
 			if err == errNotIsolated {
 				http.Error(w, "not currently isolated", http.StatusBadRequest)
 				return

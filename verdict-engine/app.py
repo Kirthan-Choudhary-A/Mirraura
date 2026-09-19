@@ -34,6 +34,7 @@ class ScoreRequest(BaseModel):
     sample_hash: str
     sample_filename: str = ""
     timed_out: bool = False
+    actor: str = ""
     events: List[Event] = []
     # "sample" = uploaded file (sample_hash is a real file identity, eligible for
     # auto-propose); "monitor" = continuous-monitoring event batch (the hash is of
@@ -44,11 +45,16 @@ class ScoreRequest(BaseModel):
 class ActionRequest(BaseModel):
     action: str
     device_id: str
+    actor: str = ""
 
 
 class HashSubmitRequest(BaseModel):
     hash: str
     label: str
+
+
+class HashDecisionRequest(BaseModel):
+    actor: str = ""
 
 
 def _strip_entry_hash(record: dict) -> dict:
@@ -97,6 +103,7 @@ def score(req: ScoreRequest):
         "verdict_id": verdict_id,
         "sample_hash": req.sample_hash,
         "sample_filename": req.sample_filename,
+        "actor": req.actor,
         "verdict": verdict,
         "confidence": confidence,
         "causal_chain": chain,
@@ -146,6 +153,7 @@ def log_action(req: ActionRequest):
         "record_id": str(uuid.uuid4()),
         "device_id": req.device_id,
         "action": req.action,
+        "actor": req.actor,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     return _strip_entry_hash(audit_log.append(record))
@@ -167,7 +175,7 @@ def submit_hash_route(req: HashSubmitRequest):
 
 
 @app.post("/hashes/{hash}/approve")
-def approve_hash_route(hash: str):
+def approve_hash_route(hash: str, req: HashDecisionRequest):
     try:
         entry = approve_hash(hash)
     except HashNotFoundError:
@@ -180,6 +188,7 @@ def approve_hash_route(hash: str):
             "action": "hash_approved",
             "hash": entry["hash"],
             "label": entry["label"],
+            "actor": req.actor,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
@@ -187,7 +196,7 @@ def approve_hash_route(hash: str):
 
 
 @app.post("/hashes/{hash}/reject")
-def reject_hash_route(hash: str):
+def reject_hash_route(hash: str, req: HashDecisionRequest):
     try:
         entry = reject_hash(hash)
     except HashNotFoundError:
@@ -200,6 +209,7 @@ def reject_hash_route(hash: str):
             "action": "hash_rejected",
             "hash": entry["hash"],
             "label": entry["label"],
+            "actor": req.actor,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     )
