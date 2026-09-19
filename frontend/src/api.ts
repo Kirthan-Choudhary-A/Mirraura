@@ -105,11 +105,14 @@ export type LiveMessage =
 
 const MAX_EVENTS = 500;
 
-// Only the shadow-run feed is rendered today (App.tsx); monitor-loop events
-// are received but not yet shown anywhere (Part 3 adds that tab), so they're
-// filtered out here rather than mixed into the same list.
 export function applyLiveEvent(events: MirraEvent[], msg: LiveMessage): MirraEvent[] {
   if (msg.type !== "event" || msg.source !== "sample") return events;
+  return [...events, msg.data].slice(-MAX_EVENTS);
+}
+
+/** Sibling to applyLiveEvent for the "Endpoint monitor" feed tab. */
+export function applyMonitorEvent(events: MirraEvent[], msg: LiveMessage): MirraEvent[] {
+  if (msg.type !== "event" || msg.source !== "monitor") return events;
   return [...events, msg.data].slice(-MAX_EVENTS);
 }
 

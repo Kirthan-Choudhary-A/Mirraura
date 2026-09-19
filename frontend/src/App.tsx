@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { applyLiveEvent, connectLive, fetchMonitorStatus, logout, me, shouldUpdateSampleVerdict } from "./api";
+import { applyLiveEvent, applyMonitorEvent, connectLive, fetchMonitorStatus, logout, me, shouldUpdateSampleVerdict } from "./api";
 import type { ConnectionState } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
 import { EventFeed } from "./components/EventFeed";
@@ -13,7 +13,8 @@ import type { MirraEvent, Verdict } from "./types";
 function App() {
   const [user, setUser] = useState<{ username: string; role: string } | null | undefined>(undefined);
   const [sessionExpired, setSessionExpired] = useState(false);
-  const [events, setEvents] = useState<MirraEvent[]>([]);
+  const [sampleEvents, setSampleEvents] = useState<MirraEvent[]>([]);
+  const [monitorEvents, setMonitorEvents] = useState<MirraEvent[]>([]);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isolated, setIsolated] = useState(false);
@@ -35,7 +36,8 @@ function App() {
       })
       .catch((e) => setMonitorError(e instanceof Error ? e.message : "failed to load monitor status"));
     const conn = connectLive((msg) => {
-      setEvents((prev) => applyLiveEvent(prev, msg));
+      setSampleEvents((prev) => applyLiveEvent(prev, msg));
+      setMonitorEvents((prev) => applyMonitorEvent(prev, msg));
       if (shouldUpdateSampleVerdict(msg)) {
         setVerdict(msg.data);
       }
@@ -98,7 +100,7 @@ function App() {
         <div className="detonation-zone__left">
           <UploadPanel
             onVerdict={handleUpload}
-            onUploadStart={() => setEvents([])}
+            onUploadStart={() => setSampleEvents([])}
             onSessionExpired={() => {
               setSessionExpired(true);
               setUser(null);
@@ -107,7 +109,7 @@ function App() {
           <VerdictPanel verdict={verdict} />
         </div>
         <div className="detonation-zone__right">
-          <EventFeed events={events} />
+          <EventFeed sampleEvents={sampleEvents} monitorEvents={monitorEvents} />
         </div>
       </section>
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { approveHash, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
-import { applyLiveEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
+import { applyLiveEvent, applyMonitorEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import { ApiError, request } from "./api";
 import { isValidSha256, sha256Hex } from "./api";
 import type { MirraEvent, Verdict } from "./types";
@@ -171,6 +171,23 @@ describe("shouldUpdateSampleVerdict", () => {
 
   it("is false for a non-verdict message", () => {
     expect(shouldUpdateSampleVerdict({ type: "reconnected" })).toBe(false);
+  });
+});
+
+describe("applyMonitorEvent", () => {
+  it("appends a monitor-source event", () => {
+    const result = applyMonitorEvent([], { type: "event", source: "monitor", data: makeEvent("e1") });
+    expect(result).toHaveLength(1);
+  });
+
+  it("ignores a sample-source event", () => {
+    const result = applyMonitorEvent([], { type: "event", source: "sample", data: makeEvent("e1") });
+    expect(result).toHaveLength(0);
+  });
+
+  it("ignores non-event messages", () => {
+    const result = applyMonitorEvent([makeEvent("e1")], { type: "isolated" });
+    expect(result).toHaveLength(1);
   });
 });
 

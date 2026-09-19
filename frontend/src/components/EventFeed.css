@@ -1,0 +1,107 @@
+.event-feed {
+  display: flex;
+  flex-direction: column;
+  height: 420px;
+  max-height: 70vh;
+  position: relative;
+}
+
+.event-feed__chips {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.event-feed__chip {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px var(--sp-2);
+  font-size: var(--fs-1);
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: color var(--motion-fast), border-color var(--motion-fast);
+}
+
+.event-feed__chip[data-active="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.trace-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.trace-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px var(--sp-1);
+  border-left: 2px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-2);
+  color: var(--text-muted);
+  animation: trace-in 1.2s ease-out both;
+}
+
+.trace-row:last-child {
+  border-bottom: none;
+}
+
+.trace-row__detail {
+  overflow-wrap: anywhere;
+}
+
+.trace-row__tag {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--fs-1);
+  color: var(--sev-suspicious);
+  border: 1px solid var(--sev-suspicious);
+  border-radius: var(--radius);
+  padding: 0 var(--sp-1);
+}
+
+.trace-empty {
+  color: var(--text-muted);
+  font-size: var(--fs-3);
+}
+
+@keyframes trace-in {
+  0% {
+    background: var(--accent-bg);
+    border-left-color: var(--accent);
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    background: transparent;
+    border-left-color: var(--border);
+  }
+}
+
+.trace-jump {
+  position: absolute;
+  bottom: var(--sp-2);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--radius);
+  padding: 4px var(--sp-2);
+  font-size: var(--fs-1);
+  font-weight: 600;
+  cursor: pointer;
+}
