@@ -34,3 +34,17 @@ func verdictDetailHandler(verdictEngineURL string) http.HandlerFunc {
 		io.Copy(w, resp.Body)
 	}
 }
+
+func chainVerifyHandler(verdictEngineURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		resp, err := httpClient.Get(verdictEngineURL + "/verify")
+		if err != nil {
+			http.Error(w, "verdict-engine unreachable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}
+}
