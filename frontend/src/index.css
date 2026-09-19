@@ -343,81 +343,12 @@ button:disabled {
   }
 }
 
-/* ---------- Verdict panel ---------- */
+/* Verdict panel: see components/VerdictPanel.css (rewritten Task 7) */
 
-.verdict-flash {
-  --severity: var(--sev-inconclusive);
-  border-left: 2px solid var(--severity);
-  padding-left: var(--sp-2);
-  animation: verdict-flash 1s ease-out both;
-}
-
-@keyframes verdict-flash {
-  0% {
-    background: color-mix(in srgb, var(--severity) 20%, transparent);
-  }
-  100% {
-    background: transparent;
-  }
-}
-
-.verdict-readout {
-  font-size: 26px;
-  font-weight: 600;
-  color: var(--severity, var(--ink));
-  margin: 0 0 4px;
-}
-
-.verdict-confidence {
-  font-family: var(--font-mono);
-  font-size: 14px;
-  color: var(--ink-muted);
-}
-
-.verdict-meta {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px var(--sp-1);
-  margin: var(--sp-1) 0 0;
-  font-size: 13px;
-}
-
-.verdict-meta dt {
-  color: var(--ink-muted);
-}
-
-.verdict-meta dd {
-  margin: 0;
-  color: var(--ink);
-  overflow-wrap: anywhere;
-}
-
-.causal-list {
-  list-style: none;
-  margin: var(--sp-1) 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.causal-list li {
-  display: flex;
-  gap: var(--sp-1);
-  font-size: 14px;
-  color: var(--ink-muted);
-}
-
-.causal-list li::before {
-  content: "\2014";
-  font-family: var(--font-mono);
-  color: var(--ink-muted);
-  flex-shrink: 0;
-}
-
+/* Shared across panels with an empty state (VerdictPanel, PendingHashApprovals). */
 .empty-copy {
-  color: var(--ink-muted);
-  font-size: 14px;
+  color: var(--text-muted);
+  font-size: var(--fs-3);
 }
 
 /* Upload panel: see components/UploadPanel.css (rewritten Task 6) */
@@ -607,7 +538,6 @@ button:disabled {
 
 @media (prefers-reduced-motion: reduce) {
   .trace-row,
-  .verdict-flash,
   .monitor-banner,
   .spinner {
     animation-duration: 0.01ms !important;
