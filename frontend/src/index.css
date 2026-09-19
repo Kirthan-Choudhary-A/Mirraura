@@ -420,55 +420,7 @@ button:disabled {
   font-size: 14px;
 }
 
-/* ---------- Upload panel ---------- */
-
-.upload-panel__row {
-  display: flex;
-  gap: var(--sp-2);
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.upload-panel__input {
-  font-family: var(--font-sans);
-  color: var(--ink);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px var(--sp-1);
-}
-
-.run-button {
-  background: var(--ember);
-  color: var(--bg);
-  border: none;
-  border-radius: var(--radius);
-  padding: 8px var(--sp-2);
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-
-.run-button:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-
-.spinner {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--bg) 35%, transparent);
-  border-top-color: var(--bg);
-  display: inline-block;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+/* Upload panel: see components/UploadPanel.css (rewritten Task 6) */
 
 .error-text {
   color: var(--sev-compromised);
