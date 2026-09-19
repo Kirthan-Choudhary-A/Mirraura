@@ -1,0 +1,251 @@
+.login-page {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 960px) {
+  .login-page {
+    flex-direction: row;
+  }
+}
+
+/* ---------- Left panel: wordmark, tagline, features, scanline ---------- */
+/* Hidden by default (mobile drops this panel entirely, not just visually —
+   the `animation` property below is only ever declared inside the desktop
+   media query, so nothing animates off-screen on a phone). */
+
+.login-aside {
+  display: none;
+  position: relative;
+  overflow: hidden;
+  padding: var(--sp-7);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+@media (min-width: 960px) {
+  .login-aside {
+    display: flex;
+    align-items: center;
+    flex: 0 0 55%;
+  }
+}
+
+.login-aside__content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  max-width: 420px;
+}
+
+.login-aside__wordmark .wordmark__text {
+  font-size: var(--fs-7);
+}
+
+.login-aside__tagline {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--fs-5);
+  font-weight: 500;
+}
+
+.login-aside__features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.login-aside__features li {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-muted);
+  font-size: var(--fs-3);
+}
+
+.login-aside__features svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* A single 1px line drifting top-to-bottom, ~8s loop, ~15% peak opacity —
+   "a detonation chamber being watched." Base state is invisible so a
+   reduced-motion flash-to-final-frame never shows a stray line. */
+.login-aside__scanline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0;
+}
+
+@media (min-width: 960px) {
+  .login-aside__scanline {
+    animation: login-scanline 8s linear infinite;
+  }
+}
+
+@keyframes login-scanline {
+  0% {
+    top: 0%;
+    opacity: 0;
+  }
+  8% {
+    opacity: 0.15;
+  }
+  92% {
+    opacity: 0.15;
+  }
+  100% {
+    top: 100%;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-aside__scanline {
+    display: none;
+  }
+}
+
+/* ---------- Right panel: form card ---------- */
+
+.login-form-side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-5);
+}
+
+.login-form-side__wordmark {
+  display: flex;
+  margin-bottom: var(--sp-5);
+}
+
+.login-form-side__wordmark .wordmark__text {
+  font-size: var(--fs-6);
+}
+
+@media (min-width: 960px) {
+  .login-form-side {
+    flex: 0 0 45%;
+  }
+  .login-form-side__wordmark {
+    display: none;
+  }
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--sp-6);
+}
+
+.login-card h1 {
+  font-size: var(--fs-6);
+}
+
+.login-card__subtitle {
+  margin: 0 0 var(--sp-4);
+  color: var(--text-muted);
+  font-size: var(--fs-3);
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: var(--sp-3);
+}
+
+.login-field label {
+  font-size: var(--fs-2);
+  color: var(--text-muted);
+}
+
+.login-field input {
+  font-family: var(--font-sans);
+  font-size: var(--fs-3);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px var(--sp-2);
+}
+
+.login-field input:disabled {
+  opacity: 0.6;
+}
+
+.login-field__password {
+  position: relative;
+  display: flex;
+}
+
+.login-field__password input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 40px;
+}
+
+.login-field__toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  transition: color var(--motion-fast);
+}
+
+.login-field__toggle:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.login-field__hint {
+  margin: 2px 0 0;
+  font-size: var(--fs-1);
+  color: var(--sev-suspicious);
+}
+
+.login-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  margin-top: var(--sp-4);
+  padding: 10px var(--sp-3);
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: var(--fs-3);
+  transition: filter var(--motion-fast);
+}
+
+.login-submit:hover:not(:disabled) {
+  filter: brightness(1.08);
+}

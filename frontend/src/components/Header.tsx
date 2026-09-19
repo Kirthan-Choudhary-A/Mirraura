@@ -6,25 +6,8 @@ import { getStoredTheme, setStoredTheme } from "../theme";
 import type { Theme } from "../theme";
 import { Badge } from "./Badge";
 import type { BadgeTone } from "./Badge";
+import { Wordmark } from "./Wordmark";
 import "./Header.css";
-
-/**
- * Placeholder mark: two overlapping offset rounded shapes (the "duplicated
- * shadow" motif from the design plan) plus the bare wordmark text. Task 5
- * builds the real SVG mark and either swaps this out or refines it in
- * place — exported here so it has a slot to do either.
- */
-export function Wordmark() {
-  return (
-    <span className="wordmark">
-      <svg className="wordmark__mark" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
-        <rect x="5" y="5" width="12" height="12" rx="4" fill="var(--accent)" opacity="0.5" />
-        <rect x="2" y="2" width="12" height="12" rx="4" fill="var(--text)" />
-      </svg>
-      <span className="wordmark__text">Mirraura</span>
-    </span>
-  );
-}
 
 const CONN_COPY: Record<ConnectionState, { label: string; tone: BadgeTone; icon: LucideIcon }> = {
   connecting: { label: "Connecting…", tone: "neutral", icon: Wifi },

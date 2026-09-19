@@ -150,12 +150,6 @@ input {
   font-size: 14px;
 }
 
-/* Visible keyboard focus everywhere — do not remove without replacing */
-:focus-visible {
-  outline: 2px solid var(--ember);
-  outline-offset: 2px;
-}
-
 button {
   cursor: pointer;
 }
@@ -642,34 +636,7 @@ button:disabled {
 }
 
 /* ---------- Login page ---------- */
-
-.login-page {
-  min-height: 100svh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--sp-3);
-}
-
-.login-form {
-  width: 100%;
-  max-width: 360px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-}
-
-.login-form label {
-  font-size: 13px;
-  color: var(--ink-muted);
-  margin-top: var(--sp-1);
-}
-
-.login-form__hint {
-  font-size: 12px;
-  color: var(--sev-suspicious);
-  margin: 0;
-}
+/* Owned by LoginPage.css (component-scoped) since Task 5. */
 
 .app-header__user {
   font-size: 12px;
