@@ -27,3 +27,12 @@
   color: var(--text);
   border-bottom-color: var(--accent);
 }
+
+.tabs__badge {
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: var(--fs-1);
+  font-variant-numeric: tabular-nums;
+}

@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, HelpCircle, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
-import { fetchChainStatus, fetchVerdicts } from "../api";
+import { ApiError, fetchChainStatus, fetchVerdicts } from "../api";
 import type { ChainStatus } from "../api";
 import type { Verdict } from "../types";
 import { Badge } from "./Badge";
 import type { BadgeTone } from "./Badge";
 import { Card } from "./Card";
 import { CopyHash } from "./CopyHash";
+import { Skeleton } from "./Skeleton";
+import { useToast } from "./Toast";
 import "./AuditLogTable.css";
 
 type AuditRow = Verdict & {
@@ -85,23 +87,47 @@ function ChainIndicator({ status }: { status: ChainStatus | null }) {
   );
 }
 
-export function AuditLogTable({ refreshKey }: { refreshKey: number }) {
+export function AuditLogTable({
+  refreshKey,
+  onSessionExpired,
+  onVerdictsChange,
+  onChainStatusChange,
+}: {
+  refreshKey: number;
+  onSessionExpired?: () => void;
+  onVerdictsChange?: (v: Verdict[]) => void;
+  onChainStatusChange?: (s: ChainStatus | null) => void;
+}) {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [chainStatus, setChainStatus] = useState<ChainStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const { push } = useToast();
 
   useEffect(() => {
     fetchVerdicts()
       .then((v) => {
         setRows(v as AuditRow[]);
+        onVerdictsChange?.(v);
         setError(null);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load audit log"));
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 401) return onSessionExpired?.();
+        if (e instanceof ApiError && e.status === 403) return push("Admins only", "error");
+        setError(e instanceof Error ? e.message : "failed to load audit log");
+      })
+      .finally(() => setLoading(false));
     fetchChainStatus()
-      .then(setChainStatus)
-      .catch(() => setChainStatus(null));
+      .then((s) => {
+        setChainStatus(s);
+        onChainStatusChange?.(s);
+      })
+      .catch(() => {
+        setChainStatus(null);
+        onChainStatusChange?.(null);
+      });
   }, [refreshKey]);
 
   const filtered = useMemo(() => {
@@ -135,7 +161,9 @@ export function AuditLogTable({ refreshKey }: { refreshKey: number }) {
         <span className="audit-count mono">{filtered.length} entries</span>
       </div>
 
-      {pageRows.length === 0 ? (
+      {loading ? (
+        <Skeleton rows={5} />
+      ) : pageRows.length === 0 ? (
         <p className="empty-copy">No audit entries yet.</p>
       ) : (
         <div className="table-scroll">

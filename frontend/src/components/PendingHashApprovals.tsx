@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { approveHash, fetchHashes, isValidSha256, rejectHash, submitHash } from "../api";
+import { ApiError, approveHash, fetchHashes, isValidSha256, rejectHash, submitHash } from "../api";
 import type { HashEntry } from "../api";
 import { Card } from "./Card";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CopyHash } from "./CopyHash";
+import { Skeleton } from "./Skeleton";
+import { useToast } from "./Toast";
 import "./PendingHashApprovals.css";
 
 type PendingAction = { hash: string; label: string; decide: (h: string) => Promise<void>; verb: string };
@@ -12,12 +14,14 @@ export function PendingHashApprovals({
   refreshKey,
   role,
   onDecision,
-  onPendingCountChange,
+  onSessionExpired,
+  onHashesChange,
 }: {
   refreshKey: number;
   role: "admin" | "analyst";
   onDecision: () => void;
-  onPendingCountChange?: (n: number) => void;
+  onSessionExpired?: () => void;
+  onHashesChange?: (entries: HashEntry[]) => void;
 }) {
   const [entries, setEntries] = useState<HashEntry[]>([]);
   const [hashInput, setHashInput] = useState("");
@@ -26,23 +30,27 @@ export function PendingHashApprovals({
   const [busyHash, setBusyHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [loading, setLoading] = useState(true);
+  const { push } = useToast();
 
   function refetch() {
     fetchHashes()
       .then((entries) => {
         setEntries(entries);
+        onHashesChange?.(entries);
         setError(null);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load pending hashes"));
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 401) return onSessionExpired?.();
+        if (e instanceof ApiError && e.status === 403) return push("Admins only", "error");
+        setError(e instanceof Error ? e.message : "failed to load pending hashes");
+      })
+      .finally(() => setLoading(false));
   }
 
   useEffect(refetch, [refreshKey]);
 
   const pending = entries.filter((e) => e.status === "pending");
-
-  useEffect(() => {
-    onPendingCountChange?.(pending.length);
-  }, [pending.length, onPendingCountChange]);
 
   async function runDecision(hash: string, decide: (h: string) => Promise<void>) {
     setBusyHash(hash);
@@ -52,7 +60,13 @@ export function PendingHashApprovals({
       refetch();
       onDecision();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "action failed");
+      if (e instanceof ApiError && e.status === 401) {
+        onSessionExpired?.();
+      } else if (e instanceof ApiError && e.status === 403) {
+        push("Admins only", "error");
+      } else {
+        setError(e instanceof Error ? e.message : "action failed");
+      }
     } finally {
       setBusyHash(null);
       setPendingAction(null);
@@ -74,14 +88,22 @@ export function PendingHashApprovals({
       setLabelInput("");
       refetch();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "submit failed");
+      if (err instanceof ApiError && err.status === 401) {
+        onSessionExpired?.();
+      } else if (err instanceof ApiError && err.status === 403) {
+        push("Admins only", "error");
+      } else {
+        setError(err instanceof Error ? err.message : "submit failed");
+      }
     }
   }
 
   return (
     <Card title="Pending hash approvals" action={<span className="pending-count mono">{pending.length}</span>}>
       {error && <p className="error-text">{error}</p>}
-      {pending.length === 0 ? (
+      {loading ? (
+        <Skeleton rows={3} />
+      ) : pending.length === 0 ? (
         <p className="empty-copy">No hashes awaiting review.</p>
       ) : (
         <div className="table-scroll">
