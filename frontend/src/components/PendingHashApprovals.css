@@ -17,7 +17,7 @@
   text-align: left;
   font-family: var(--font-sans);
   font-weight: 500;
-  color: var(--text-faint);
+  color: var(--text-muted);
   text-transform: uppercase;
   font-size: var(--fs-1);
   letter-spacing: 0.04em;
