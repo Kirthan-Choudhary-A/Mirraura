@@ -43,17 +43,21 @@ class AuditLog:
                 return record
         return None
 
-    def verify_chain(self) -> bool:
+    def verify_chain_detail(self) -> dict:
         prev_hash = GENESIS_HASH
-        for record in self.all():
+        records = self.all()
+        for i, record in enumerate(records):
             record = dict(record)
             stored_entry_hash = record.pop("entry_hash", None)
             if record.get("prev_log_hash") != prev_hash:
-                return False
+                return {"intact": False, "entries": len(records), "broken_at": i + 1}
             expected = hashlib.sha256(
                 json.dumps(record, sort_keys=True).encode()
             ).hexdigest()
             if expected != stored_entry_hash:
-                return False
+                return {"intact": False, "entries": len(records), "broken_at": i + 1}
             prev_hash = stored_entry_hash
-        return True
+        return {"intact": True, "entries": len(records), "broken_at": None}
+
+    def verify_chain(self) -> bool:
+        return self.verify_chain_detail()["intact"]

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { approveHash, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
-import { applyLiveEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
+import { approveHash, fetchChainStatus, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
+import { applyLiveEvent, applyMonitorEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import { ApiError, request } from "./api";
+import { isValidSha256, sha256Hex } from "./api";
 import type { MirraEvent, Verdict } from "./types";
 
 function makeEvent(id: string): MirraEvent {
@@ -40,6 +41,17 @@ describe("api", () => {
   it("fetchMonitorStatus throws when the response is not ok", async () => {
     (fetch as any).mockResolvedValue({ ok: false, text: async () => "boom" });
     await expect(fetchMonitorStatus()).rejects.toThrow("boom");
+  });
+
+  it("fetchChainStatus calls the backend audit/verify endpoint", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ intact: true, entries: 3, broken_at: null }),
+    });
+    const result = await fetchChainStatus();
+    expect(fetch).toHaveBeenCalledWith("/api/audit/verify", expect.objectContaining({ credentials: "same-origin" }));
+    expect(result).toEqual({ intact: true, entries: 3, broken_at: null });
   });
 
   it("uploadSample posts multipart form data and returns the verdict", async () => {
@@ -173,6 +185,23 @@ describe("shouldUpdateSampleVerdict", () => {
   });
 });
 
+describe("applyMonitorEvent", () => {
+  it("appends a monitor-source event", () => {
+    const result = applyMonitorEvent([], { type: "event", source: "monitor", data: makeEvent("e1") });
+    expect(result).toHaveLength(1);
+  });
+
+  it("ignores a sample-source event", () => {
+    const result = applyMonitorEvent([], { type: "event", source: "sample", data: makeEvent("e1") });
+    expect(result).toHaveLength(0);
+  });
+
+  it("ignores non-event messages", () => {
+    const result = applyMonitorEvent([makeEvent("e1")], { type: "isolated" });
+    expect(result).toHaveLength(1);
+  });
+});
+
 describe("nextBackoffMs", () => {
   it("doubles the current delay", () => {
     expect(nextBackoffMs(1000)).toBe(2000);
@@ -181,5 +210,31 @@ describe("nextBackoffMs", () => {
   it("caps at 30 seconds", () => {
     expect(nextBackoffMs(20000)).toBe(30000);
     expect(nextBackoffMs(30000)).toBe(30000);
+  });
+});
+
+describe("isValidSha256", () => {
+  it("accepts a valid 64-character lowercase hex hash", () => {
+    expect(isValidSha256("a".repeat(64))).toBe(true);
+  });
+
+  it("rejects the wrong length", () => {
+    expect(isValidSha256("a".repeat(63))).toBe(false);
+  });
+
+  it("rejects uppercase characters", () => {
+    expect(isValidSha256("A".repeat(64))).toBe(false);
+  });
+
+  it("rejects non-hex characters", () => {
+    expect(isValidSha256("g".repeat(64))).toBe(false);
+  });
+});
+
+describe("sha256Hex", () => {
+  it("hashes a known file to its known SHA-256", async () => {
+    const file = new File(["hello"], "hello.txt");
+    const hash = await sha256Hex(file);
+    expect(hash).toBe("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
   });
 });

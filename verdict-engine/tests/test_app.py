@@ -281,3 +281,10 @@ def test_archive_write_failure_does_not_break_score(monkeypatch):
     resp = client.post("/score", json={"sample_hash": "7" * 64, "events": []})
     assert resp.status_code == 200
     assert resp.json()["verdict"] == "Inconclusive"
+
+
+def test_verify_route_returns_chain_status():
+    resp = client.get("/verify")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "intact" in body and "entries" in body and "broken_at" in body

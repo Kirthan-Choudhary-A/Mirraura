@@ -50,12 +50,33 @@ export async function uploadSample(file: File): Promise<Verdict> {
   return request("/api/samples", { method: "POST", body: form });
 }
 
+/** SHA-256 of a file's bytes, hex-encoded. Computed client-side so the
+ * upload panel can show the hash before the file is actually sent. */
+export async function sha256Hex(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Matches the backend's known-bad-hash format: 64 lowercase hex chars. */
+export function isValidSha256(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
+}
+
 export async function fetchVerdicts(): Promise<Verdict[]> {
   return request("/api/verdicts");
 }
 
 export async function fetchMonitorStatus(): Promise<{ isolated: boolean }> {
   return request("/api/monitor/status");
+}
+
+export type ChainStatus = { intact: boolean; entries: number; broken_at: number | null };
+
+export async function fetchChainStatus(): Promise<ChainStatus> {
+  return request("/api/audit/verify");
 }
 
 export async function reconnectMonitor(): Promise<void> {
@@ -90,11 +111,14 @@ export type LiveMessage =
 
 const MAX_EVENTS = 500;
 
-// Only the shadow-run feed is rendered today (App.tsx); monitor-loop events
-// are received but not yet shown anywhere (Part 3 adds that tab), so they're
-// filtered out here rather than mixed into the same list.
 export function applyLiveEvent(events: MirraEvent[], msg: LiveMessage): MirraEvent[] {
   if (msg.type !== "event" || msg.source !== "sample") return events;
+  return [...events, msg.data].slice(-MAX_EVENTS);
+}
+
+/** Sibling to applyLiveEvent for the "Endpoint monitor" feed tab. */
+export function applyMonitorEvent(events: MirraEvent[], msg: LiveMessage): MirraEvent[] {
+  if (msg.type !== "event" || msg.source !== "monitor") return events;
   return [...events, msg.data].slice(-MAX_EVENTS);
 }
 

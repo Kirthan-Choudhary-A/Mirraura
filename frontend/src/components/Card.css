@@ -1,0 +1,26 @@
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--sp-3);
+}
+
+.card + .card {
+  margin-top: var(--sp-3);
+}
+
+.card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.card__title {
+  margin: 0;
+}
+
+.card__action {
+  flex-shrink: 0;
+}

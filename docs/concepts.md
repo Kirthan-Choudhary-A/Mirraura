@@ -77,6 +77,12 @@ No public sign-up — this is a security tool, not a public service. Exactly one
 **Content-addressed identity for non-file inputs** — Content-addressed hashing (already used for uploaded files) normally means "hash the file's bytes" so identical content always gets the same identifier. Continuous monitoring doesn't have a single file to hash — it has a batch of behavior events. Applying the same principle to *something else reproducible* (the event batch itself) keeps the "every judgment is content-addressed" property true even when there's no literal file involved.
 *In Mirraura:* each poll cycle's batch of new events is SHA-256 hashed, and that hash is passed to the verdict engine as `sample_hash` — same field, same meaning ("exactly what was judged"), just applied to a different kind of input than a file upload.
 
+## Frontend redesign (Part 3)
+
+**Design tokens (`frontend/src/index.css`)** — Every color, font, spacing, and radius value the dashboard uses is a CSS custom property (`--bg`, `--text`, `--sev-compromised`, `--sp-3`, and so on) rather than a hardcoded value scattered across component files. A dark theme is the default; a `:root[data-theme="light"]` override (plus a `prefers-color-scheme` fallback for anyone who hasn't picked a theme yet) redefines the same token names for light mode, so every component that reads a token repaints correctly without its own CSS knowing which theme is active. `--sev-*` tokens (normal/suspicious/compromised/inconclusive) are the one place verdict severity color is defined, shared by every badge, table row, and stat in the dashboard.
+
+**Chain-integrity verification endpoint** — The hash-chained audit log (see above) is only tamper-*evident* if something actually walks the chain and reports whether it's still intact. `GET /api/audit/verify` (backend) proxies to the verdict engine's `GET /verify`, which walks every entry's stored hash against a hash recomputed from its own content plus the previous entry's hash, and returns `{intact, entries, broken_at}`. The dashboard's Audit log tab fetches this on load and shows it prominently above the table ("Chain intact · N entries" or "Chain broken at entry N") rather than as a small corner label — it's the log's whole reason for existing, so it isn't left implicit.
+
 ## Languages — what and why
 
 **Go (backend orchestrator, `backend/`)** — Genuinely good at exactly what the orchestrator needs: talking to the Docker API to spin up/tear down containers and networks, and handling many concurrent things (multiple runs, a live WebSocket feed to the frontend) without much ceremony. Compiles to a single binary — convenient for a demo, no runtime to install on the machine that runs it.
@@ -111,6 +117,20 @@ No public sign-up — this is a security tool, not a public service. Exactly one
 **golang.org/x/crypto/bcrypt (Go)** — Industry-standard adaptive password hashing (not a fast general-purpose hash like SHA-256, which would make brute-forcing a stolen password database cheap). Used to store the admin password (and any `users.json` entries) as a hash, never plaintext, and to check a login attempt in constant time relative to the stored hash.
 
 **Vite + Vitest (frontend)** — Vite for a fast dev server and build (React + TypeScript template); Vitest (Vite-native test runner) for the one meaningful frontend unit test (the API client's request/response shapes) — no separate test-runner config needed since it shares Vite's setup.
+
+**lucide-react** — A tree-shakeable icon set as React components (not an
+icon font or an SVG-sprite build step). Used for every icon in the
+redesigned dashboard (event types, verdict badges, the isolation banner,
+theme toggle) instead of hand-drawn inline SVGs, since a consistent
+stroke-width icon family reads as one visual system rather than a pile of
+one-off shapes.
+
+**@fontsource-variable/inter & @fontsource-variable/jetbrains-mono** —
+Self-hosted variable-font packages (the font files ship in the built
+bundle, not fetched from a CDN at runtime). Chosen over the Google Fonts
+CDN links Part 1 shipped with, specifically so the dashboard works fully
+offline and so the CSP introduced in Part 2 (`default-src 'self'`) never
+has to carve out an exception for a third-party font host.
 
 **WebSocket (protocol, used by gorilla/websocket + the browser's native `WebSocket` API)** — A persistent two-way connection between backend and frontend, so the dashboard shows events and verdicts *as they happen* during a run instead of the user having to refresh.
 

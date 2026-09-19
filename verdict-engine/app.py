@@ -147,6 +147,11 @@ def get_verdict(verdict_id: str):
     return _strip_entry_hash(record)
 
 
+@app.get("/verify")
+def verify_chain_route():
+    return audit_log.verify_chain_detail()
+
+
 @app.post("/audit/action")
 def log_action(req: ActionRequest):
     record = {
