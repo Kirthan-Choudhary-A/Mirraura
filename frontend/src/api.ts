@@ -73,6 +73,12 @@ export async function fetchMonitorStatus(): Promise<{ isolated: boolean }> {
   return request("/api/monitor/status");
 }
 
+export type ChainStatus = { intact: boolean; entries: number; broken_at: number | null };
+
+export async function fetchChainStatus(): Promise<ChainStatus> {
+  return request("/api/audit/verify");
+}
+
 export async function reconnectMonitor(): Promise<void> {
   await request("/api/monitor/reconnect", { method: "POST" });
 }

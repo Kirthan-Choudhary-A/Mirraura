@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { approveHash, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
+import { approveHash, fetchChainStatus, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
 import { applyLiveEvent, applyMonitorEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import { ApiError, request } from "./api";
 import { isValidSha256, sha256Hex } from "./api";
@@ -41,6 +41,17 @@ describe("api", () => {
   it("fetchMonitorStatus throws when the response is not ok", async () => {
     (fetch as any).mockResolvedValue({ ok: false, text: async () => "boom" });
     await expect(fetchMonitorStatus()).rejects.toThrow("boom");
+  });
+
+  it("fetchChainStatus calls the backend audit/verify endpoint", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ intact: true, entries: 3, broken_at: null }),
+    });
+    const result = await fetchChainStatus();
+    expect(fetch).toHaveBeenCalledWith("/api/audit/verify", expect.objectContaining({ credentials: "same-origin" }));
+    expect(result).toEqual({ intact: true, entries: 3, broken_at: null });
   });
 
   it("uploadSample posts multipart form data and returns the verdict", async () => {
