@@ -118,6 +118,7 @@ function App() {
       <section className="admin-zone">
         <PendingHashApprovals
           refreshKey={refreshKey}
+          role={user.role === "admin" ? "admin" : "analyst"}
           onDecision={() => setRefreshKey((k) => k + 1)}
         />
         <AuditLogTable refreshKey={refreshKey} />
