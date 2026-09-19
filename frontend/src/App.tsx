@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { connectLive, fetchMonitorStatus } from "./api";
+import { applyLiveEvent, connectLive, fetchMonitorStatus, shouldUpdateSampleVerdict } from "./api";
+import type { ConnectionState } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
 import { EventFeed } from "./components/EventFeed";
 import { MonitorBanner } from "./components/MonitorBanner";
@@ -13,30 +14,31 @@ function App() {
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isolated, setIsolated] = useState(false);
+  const [connState, setConnState] = useState<ConnectionState>("connecting");
+  const [monitorError, setMonitorError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMonitorStatus()
-      .then((s) => setIsolated(s.isolated))
-      .catch(() => {});
-    const ws = connectLive((msg) => {
-      if (msg.type === "event") setEvents((prev) => [...prev, msg.data]);
-      if (msg.type === "verdict") {
+      .then((s) => {
+        setIsolated(s.isolated);
+        setMonitorError(null);
+      })
+      .catch((e) => setMonitorError(e instanceof Error ? e.message : "failed to load monitor status"));
+    const conn = connectLive((msg) => {
+      setEvents((prev) => applyLiveEvent(prev, msg));
+      if (shouldUpdateSampleVerdict(msg)) {
         setVerdict(msg.data);
-        setRefreshKey((k) => k + 1);
       }
+      if (msg.type === "verdict") setRefreshKey((k) => k + 1);
       if (msg.type === "isolated") setIsolated(true);
       if (msg.type === "reconnected") setIsolated(false);
-    });
-    return () => ws.close();
+    }, setConnState);
+    return () => conn.close();
   }, []);
 
   function handleUpload(v: Verdict) {
     setVerdict(v);
     setRefreshKey((k) => k + 1);
-  }
-
-  function handleNewRun() {
-    setEvents([]);
   }
 
   return (
@@ -46,11 +48,16 @@ function App() {
         <p className="app-header__subtitle">
           Shadow honeypot — live behavioral verdict engine
         </p>
+        <p className="app-header__conn-state" data-state={connState}>
+          {connState === "live" ? "● Live" : connState === "connecting" ? "○ Connecting…" : "○ Offline — retrying"}
+        </p>
       </header>
 
+      {monitorError && <p className="error-text">{monitorError}</p>}
+
       <section className="detonation-zone">
-        <div className="detonation-zone__left" onClickCapture={handleNewRun}>
-          <UploadPanel onVerdict={handleUpload} />
+        <div className="detonation-zone__left">
+          <UploadPanel onVerdict={handleUpload} onUploadStart={() => setEvents([])} />
           <VerdictPanel verdict={verdict} />
         </div>
         <div className="detonation-zone__right">

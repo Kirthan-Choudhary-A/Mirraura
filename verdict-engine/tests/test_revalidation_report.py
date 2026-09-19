@@ -94,6 +94,34 @@ def test_run_archive_skips_known_bad_match_entries():
     assert "0 / 0 verdicts changed" in table
 
 
+def test_run_archive_skips_timed_out_entries():
+    # verdict_at_capture ("Inconclusive") came from app.py's timed-out
+    # short-circuit, never score_events(); even though the candidate would
+    # score these (truncated) events completely differently, that must not
+    # be reported as a flip.
+    entries = [
+        {
+            "verdict_id": "v1",
+            "sample_hash": "a" * 64,
+            "source": "sample",
+            "events": [_event_dict()],
+            "verdict_at_capture": "Inconclusive",
+            "confidence_at_capture": 0.0,
+            "timed_out": True,
+        }
+    ]
+    results = run_archive(entries, _StubScorer(0.9, ["x"]))
+
+    assert results[0]["skipped"] == "timed out, not scored"
+    assert "flipped" not in results[0]
+    assert "after_verdict" not in results[0]
+
+    report = build_report([], results)
+    assert report["archive"]["flipped_count"] == 0
+    assert report["archive"]["skipped_count"] == 1
+    assert report["archive"]["scored_total"] == 0
+
+
 def test_run_archive_missing_known_bad_match_field_is_scored_normally():
     # old archive lines written before this field existed must still load and
     # score fine via entry.get(...), not raise a KeyError.

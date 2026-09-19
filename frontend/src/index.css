@@ -131,6 +131,20 @@ button:disabled {
   color: var(--ink-muted);
 }
 
+.app-header__conn-state {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+}
+
+.app-header__conn-state[data-state="live"] {
+  color: var(--sev-normal);
+}
+
+.app-header__conn-state[data-state="offline"] {
+  color: var(--sev-compromised);
+}
+
 /* ---------- Panels (dense chrome, quiet — no shadow+radius kit) ---------- */
 
 .panel {

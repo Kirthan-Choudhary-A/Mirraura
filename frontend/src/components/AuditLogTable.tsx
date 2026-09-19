@@ -18,16 +18,21 @@ const SEVERITY_COLOR: Record<Verdict["verdict"], string> = {
 
 export function AuditLogTable({ refreshKey }: { refreshKey: number }) {
   const [verdicts, setVerdicts] = useState<AuditRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchVerdicts()
-      .then((v) => setVerdicts(v as AuditRow[]))
-      .catch(() => setVerdicts([]));
+      .then((v) => {
+        setVerdicts(v as AuditRow[]);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "failed to load audit log"));
   }, [refreshKey]);
 
   return (
     <div className="panel">
       <h2>Audit Log</h2>
+      {error && <p className="error-text">{error}</p>}
       <div className="table-scroll">
         <table className="data-table">
           <thead>

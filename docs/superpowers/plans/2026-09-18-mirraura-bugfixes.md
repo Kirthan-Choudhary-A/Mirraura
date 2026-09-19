@@ -1341,16 +1341,14 @@ Expected: PASS.
 
 - [ ] **Step 5: Wire the new API into `App.tsx`**
 
-Change:
+Task 7 (which runs immediately before this one) already changed the import
+line to `import { applyLiveEvent, connectLive, fetchMonitorStatus,
+shouldUpdateSampleVerdict } from "./api";` — do not search for the original
+`import { connectLive, fetchMonitorStatus } from "./api";` text, it no
+longer exists. Instead, add one new line directly below the existing
+import:
 
 ```tsx
-import { connectLive, fetchMonitorStatus } from "./api";
-```
-
-to (combining with Task 7's import if that task already landed):
-
-```tsx
-import { applyLiveEvent, connectLive, fetchMonitorStatus, shouldUpdateSampleVerdict } from "./api";
 import type { ConnectionState } from "./api";
 ```
 
