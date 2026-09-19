@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -107,6 +110,58 @@ func TestShadowContainerIsHardened(t *testing.T) {
 	}
 	if hc.Tmpfs["/samples"] != "exec" {
 		t.Errorf("expected /samples tmpfs mounted exec, got %q", hc.Tmpfs["/samples"])
+	}
+}
+
+// TestCopyFileIntoHardenedContainerSucceeds guards against the exact
+// regression this project shipped once already: CopyFileIntoContainer must
+// actually work against a container hardened with ReadonlyRootfs+Tmpfs
+// (StartShadowContainer's real, production config), not just against a
+// plain container. Docker's CopyToContainer API refuses to write into any
+// container with ReadonlyRootfs set, even into a writable tmpfs mount at
+// the destination path — this test exercises the real
+// StartShadowContainer -> CopyFileIntoContainer path end to end so a
+// regression back to CopyToContainer (or any other change that breaks
+// writing under this exact hardening combination) fails loudly here
+// instead of only surfacing as a live upload failure.
+func TestCopyFileIntoHardenedContainerSucceeds(t *testing.T) {
+	dm, err := NewDockerManager()
+	if err != nil {
+		t.Fatalf("NewDockerManager: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	networkID, err := dm.CreateShadowNetwork(ctx, "mirraura-copy-test-net")
+	if err != nil {
+		t.Fatalf("CreateShadowNetwork: %v", err)
+	}
+	containerID, err := dm.StartShadowContainer(ctx, "alpine:3.19", networkID, "mirraura-copy-test-container")
+	if err != nil {
+		t.Fatalf("StartShadowContainer: %v", err)
+	}
+	defer dm.Teardown(context.Background(), containerID, networkID)
+
+	localPath := filepath.Join(t.TempDir(), "sample.txt")
+	want := "hello from the host"
+	if err := os.WriteFile(localPath, []byte(want), 0644); err != nil {
+		t.Fatalf("write local temp file: %v", err)
+	}
+
+	if err := dm.CopyFileIntoContainer(ctx, containerID, localPath, "/samples/"); err != nil {
+		t.Fatalf("CopyFileIntoContainer: %v", err)
+	}
+
+	lines, err := dm.execAndStream(ctx, containerID, []string{"cat", "/samples/sample.txt"})
+	if err != nil {
+		t.Fatalf("execAndStream cat: %v", err)
+	}
+	var got []string
+	for line := range lines {
+		got = append(got, line)
+	}
+	if joined := strings.Join(got, ""); joined != want {
+		t.Fatalf("expected copied file content %q, got %q", want, joined)
 	}
 }
 
