@@ -1,0 +1,98 @@
+import { useState } from "react";
+import { LogOut, Moon, ShieldAlert, ShieldCheck, Sun, Wifi, WifiOff } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import type { ConnectionState } from "../api";
+import { getStoredTheme, setStoredTheme } from "../theme";
+import type { Theme } from "../theme";
+import { Badge } from "./Badge";
+import type { BadgeTone } from "./Badge";
+import "./Header.css";
+
+/**
+ * Placeholder mark: two overlapping offset rounded shapes (the "duplicated
+ * shadow" motif from the design plan) plus the bare wordmark text. Task 5
+ * builds the real SVG mark and either swaps this out or refines it in
+ * place — exported here so it has a slot to do either.
+ */
+export function Wordmark() {
+  return (
+    <span className="wordmark">
+      <svg className="wordmark__mark" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+        <rect x="5" y="5" width="12" height="12" rx="4" fill="var(--accent)" opacity="0.5" />
+        <rect x="2" y="2" width="12" height="12" rx="4" fill="var(--text)" />
+      </svg>
+      <span className="wordmark__text">Mirraura</span>
+    </span>
+  );
+}
+
+const CONN_COPY: Record<ConnectionState, { label: string; tone: BadgeTone; icon: LucideIcon }> = {
+  connecting: { label: "Connecting…", tone: "inconclusive", icon: Wifi },
+  live: { label: "Live", tone: "normal", icon: Wifi },
+  offline: { label: "Offline — retrying", tone: "compromised", icon: WifiOff },
+};
+
+export function Header({
+  user,
+  connState,
+  monitorIsolated,
+  onLogout,
+}: {
+  user: { username: string; role: string };
+  connState: ConnectionState;
+  monitorIsolated: boolean;
+  onLogout: () => void;
+}) {
+  const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
+
+  function toggleTheme() {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    setStoredTheme(next);
+    document.documentElement.dataset.theme = next;
+    setTheme(next);
+  }
+
+  const conn = CONN_COPY[connState];
+  const ConnIcon = conn.icon;
+
+  return (
+    <header className="header">
+      <div className="header__brand">
+        <Wordmark />
+        <p className="header__tagline">Shadow honeypot — live behavioral verdict engine</p>
+      </div>
+
+      <div className="header__status">
+        <Badge tone={conn.tone} icon={<ConnIcon size={12} />}>
+          {conn.label}
+        </Badge>
+        <Badge
+          tone={monitorIsolated ? "compromised" : "normal"}
+          icon={monitorIsolated ? <ShieldAlert size={12} /> : <ShieldCheck size={12} />}
+        >
+          {monitorIsolated ? "Isolated" : "Monitor connected"}
+        </Badge>
+      </div>
+
+      <div className="header__actions">
+        <button
+          type="button"
+          className="header__theme-toggle"
+          aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+          onClick={toggleTheme}
+        >
+          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
+        <div className="header__user">
+          <span className="header__user-info">
+            {user.username} · {user.role}
+          </span>
+          <button type="button" className="header__logout" onClick={onLogout}>
+            <LogOut size={12} aria-hidden="true" />
+            Sign out
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}
