@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogOut, Moon, ShieldAlert, ShieldCheck, Sun, Wifi, WifiOff } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ConnectionState } from "../api";
@@ -27,9 +27,9 @@ export function Wordmark() {
 }
 
 const CONN_COPY: Record<ConnectionState, { label: string; tone: BadgeTone; icon: LucideIcon }> = {
-  connecting: { label: "Connecting…", tone: "inconclusive", icon: Wifi },
-  live: { label: "Live", tone: "normal", icon: Wifi },
-  offline: { label: "Offline — retrying", tone: "compromised", icon: WifiOff },
+  connecting: { label: "Connecting…", tone: "neutral", icon: Wifi },
+  live: { label: "Live", tone: "neutral", icon: Wifi },
+  offline: { label: "Offline — retrying", tone: "neutral", icon: WifiOff },
 };
 
 export function Header({
@@ -44,6 +44,13 @@ export function Header({
   onLogout: () => void;
 }) {
   const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
+
+  // Sync the DOM attribute to the stored preference on first mount — the
+  // state initializer above already read it once, so reuse that value
+  // rather than calling getStoredTheme() again.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, []);
 
   function toggleTheme() {
     const next: Theme = theme === "dark" ? "light" : "dark";

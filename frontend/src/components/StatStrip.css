@@ -14,8 +14,6 @@
 
 .stat-strip__label {
   font-size: var(--fs-1);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--text-muted);
 }
 
