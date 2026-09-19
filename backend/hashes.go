@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -43,7 +45,13 @@ func hashDecisionHandler(verdictEngineURL string) http.HandlerFunc {
 			return
 		}
 		hash, decision := parts[0], parts[1]
-		resp, err := httpClient.Post(verdictEngineURL+"/hashes/"+hash+"/"+decision, "application/json", nil)
+		actor, _ := sessionFromContext(r.Context())
+		body, err := json.Marshal(map[string]string{"actor": actor.Username})
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		resp, err := httpClient.Post(verdictEngineURL+"/hashes/"+hash+"/"+decision, "application/json", bytes.NewReader(body))
 		if err != nil {
 			http.Error(w, "verdict-engine unreachable", http.StatusBadGateway)
 			return

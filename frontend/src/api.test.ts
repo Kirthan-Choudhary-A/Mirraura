@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { approveHash, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
-import { applyLiveEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
+import { approveHash, fetchChainStatus, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
+import { applyLiveEvent, applyMonitorEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
+import { ApiError, request } from "./api";
+import { isValidSha256, sha256Hex } from "./api";
 import type { MirraEvent, Verdict } from "./types";
 
 function makeEvent(id: string): MirraEvent {
@@ -24,7 +26,10 @@ describe("api", () => {
       json: async () => [{ verdict_id: "v1" }],
     });
     const result = await fetchVerdicts();
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/verdicts"));
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/verdicts"),
+      expect.objectContaining({ credentials: "same-origin" })
+    );
     expect(result).toEqual([{ verdict_id: "v1" }]);
   });
 
@@ -36,6 +41,17 @@ describe("api", () => {
   it("fetchMonitorStatus throws when the response is not ok", async () => {
     (fetch as any).mockResolvedValue({ ok: false, text: async () => "boom" });
     await expect(fetchMonitorStatus()).rejects.toThrow("boom");
+  });
+
+  it("fetchChainStatus calls the backend audit/verify endpoint", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ intact: true, entries: 3, broken_at: null }),
+    });
+    const result = await fetchChainStatus();
+    expect(fetch).toHaveBeenCalledWith("/api/audit/verify", expect.objectContaining({ credentials: "same-origin" }));
+    expect(result).toEqual({ intact: true, entries: 3, broken_at: null });
   });
 
   it("uploadSample posts multipart form data and returns the verdict", async () => {
@@ -58,12 +74,15 @@ describe("api", () => {
       json: async () => [{ hash: "a".repeat(64), status: "pending" }],
     });
     const result = await fetchHashes();
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/hashes"));
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/hashes"),
+      expect.objectContaining({ credentials: "same-origin" })
+    );
     expect(result).toEqual([{ hash: "a".repeat(64), status: "pending" }]);
   });
 
   it("approveHash posts to the hash-specific approve endpoint", async () => {
-    (fetch as any).mockResolvedValue({ ok: true, text: async () => "" });
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
     await approveHash("abc123");
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/hashes/abc123/approve"),
@@ -72,12 +91,47 @@ describe("api", () => {
   });
 
   it("rejectHash posts to the hash-specific reject endpoint", async () => {
-    (fetch as any).mockResolvedValue({ ok: true, text: async () => "" });
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
     await rejectHash("abc123");
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/hashes/abc123/reject"),
       expect.objectContaining({ method: "POST" })
     );
+  });
+});
+
+describe("request", () => {
+  it("returns parsed JSON on a successful response", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({ a: 1 }) });
+    const result = await request<{ a: number }>("/api/whatever");
+    expect(result).toEqual({ a: 1 });
+  });
+
+  it("throws an ApiError with the status code on a 401", async () => {
+    (fetch as any).mockResolvedValue({ ok: false, status: 401, text: async () => "unauthorized" });
+    await expect(request("/api/whatever")).rejects.toMatchObject({ status: 401, message: "unauthorized" });
+  });
+
+  it("throws an ApiError with the status code on a 403", async () => {
+    (fetch as any).mockResolvedValue({ ok: false, status: 403, text: async () => "forbidden" });
+    await expect(request("/api/whatever")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("thrown errors are instances of ApiError", async () => {
+    (fetch as any).mockResolvedValue({ ok: false, status: 500, text: async () => "boom" });
+    await expect(request("/api/whatever")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("resolves to undefined on a 204 No Content response with no body", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    const result = await request("/api/logout", { method: "POST" });
+    expect(result).toBeUndefined();
+  });
+
+  it("always sends credentials: same-origin", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await request("/api/whatever");
+    expect(fetch).toHaveBeenCalledWith("/api/whatever", expect.objectContaining({ credentials: "same-origin" }));
   });
 });
 
@@ -131,6 +185,23 @@ describe("shouldUpdateSampleVerdict", () => {
   });
 });
 
+describe("applyMonitorEvent", () => {
+  it("appends a monitor-source event", () => {
+    const result = applyMonitorEvent([], { type: "event", source: "monitor", data: makeEvent("e1") });
+    expect(result).toHaveLength(1);
+  });
+
+  it("ignores a sample-source event", () => {
+    const result = applyMonitorEvent([], { type: "event", source: "sample", data: makeEvent("e1") });
+    expect(result).toHaveLength(0);
+  });
+
+  it("ignores non-event messages", () => {
+    const result = applyMonitorEvent([makeEvent("e1")], { type: "isolated" });
+    expect(result).toHaveLength(1);
+  });
+});
+
 describe("nextBackoffMs", () => {
   it("doubles the current delay", () => {
     expect(nextBackoffMs(1000)).toBe(2000);
@@ -139,5 +210,31 @@ describe("nextBackoffMs", () => {
   it("caps at 30 seconds", () => {
     expect(nextBackoffMs(20000)).toBe(30000);
     expect(nextBackoffMs(30000)).toBe(30000);
+  });
+});
+
+describe("isValidSha256", () => {
+  it("accepts a valid 64-character lowercase hex hash", () => {
+    expect(isValidSha256("a".repeat(64))).toBe(true);
+  });
+
+  it("rejects the wrong length", () => {
+    expect(isValidSha256("a".repeat(63))).toBe(false);
+  });
+
+  it("rejects uppercase characters", () => {
+    expect(isValidSha256("A".repeat(64))).toBe(false);
+  });
+
+  it("rejects non-hex characters", () => {
+    expect(isValidSha256("g".repeat(64))).toBe(false);
+  });
+});
+
+describe("sha256Hex", () => {
+  it("hashes a known file to its known SHA-256", async () => {
+    const file = new File(["hello"], "hello.txt");
+    const hash = await sha256Hex(file);
+    expect(hash).toBe("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
   });
 });

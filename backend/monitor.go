@@ -93,7 +93,7 @@ func (mon *Monitor) Tick(ctx context.Context) error {
 	sum := sha256.Sum256(batch)
 	batchHash := hex.EncodeToString(sum[:])
 
-	verdict, err := scoreWithVerdictEngine(mon.verdictEngineURL, batchHash, "", "monitor", false, events)
+	verdict, err := scoreWithVerdictEngine(mon.verdictEngineURL, batchHash, "", "monitor", "", false, events)
 	if err != nil {
 		return fmt.Errorf("scoring failed: %w", err)
 	}
@@ -115,13 +115,13 @@ func (mon *Monitor) Tick(ctx context.Context) error {
 	mon.isolated = true
 	mon.mu.Unlock()
 	mon.hub.Broadcast(map[string]any{"type": "isolated"})
-	if err := logAction(mon.verdictEngineURL, "isolated", monitorDeviceID); err != nil {
+	if err := logAction(mon.verdictEngineURL, "isolated", monitorDeviceID, ""); err != nil {
 		log.Printf("monitor: failed to audit-log isolate action: %v", err)
 	}
 	return nil
 }
 
-func (mon *Monitor) Reconnect(ctx context.Context) error {
+func (mon *Monitor) Reconnect(ctx context.Context, actor string) error {
 	mon.mu.Lock()
 	if !mon.isolated {
 		mon.mu.Unlock()
@@ -136,14 +136,14 @@ func (mon *Monitor) Reconnect(ctx context.Context) error {
 	mon.isolated = false
 	mon.mu.Unlock()
 	mon.hub.Broadcast(map[string]any{"type": "reconnected"})
-	if err := logAction(mon.verdictEngineURL, "reconnected", monitorDeviceID); err != nil {
+	if err := logAction(mon.verdictEngineURL, "reconnected", monitorDeviceID, actor); err != nil {
 		log.Printf("monitor: failed to audit-log reconnect action: %v", err)
 	}
 	return nil
 }
 
-func logAction(baseURL, action, deviceID string) error {
-	body, err := json.Marshal(map[string]string{"action": action, "device_id": deviceID})
+func logAction(baseURL, action, deviceID, actor string) error {
+	body, err := json.Marshal(map[string]string{"action": action, "device_id": deviceID, "actor": actor})
 	if err != nil {
 		return err
 	}

@@ -19,3 +19,4 @@ verdict-engine/training_reports/*.txt
 sensor/target/
 .worktrees/
 .superpowers/
+users.json

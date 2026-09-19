@@ -15,13 +15,14 @@ cp .env.example .env
 ./setup.sh
 ```
 
-Once the stack is up, the dashboard is at http://localhost:5173.
+Before running `./setup.sh`, set `MIRRAURA_ADMIN_USER` and
+`MIRRAURA_ADMIN_PASSWORD` in `.env` (12+ characters, no default — the
+script refuses to start otherwise).
 
-**Known gap:** the dashboard is not functional yet when served this way — the
-frontend (`:5173`) and backend (`:8080`) are different origins, and CORS plus
-the WebSocket same-origin check (both intentionally tightened) block every
-request. This is expected until a same-origin reverse proxy lands in a later
-change, not a regression.
+Once the stack is up, the dashboard is at http://localhost:5173. Sign in
+with the admin credentials from `.env`. There's no public sign-up; add more
+accounts via an optional `MIRRAURA_USERS_PATH` JSON file (see
+`.env.example`) if you need more than one user.
 
 ## Demo samples
 

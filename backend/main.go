@@ -10,6 +10,14 @@ import (
 )
 
 func main() {
+	if len(os.Getenv("MIRRAURA_ADMIN_PASSWORD")) < 12 {
+		log.Fatal("MIRRAURA_ADMIN_PASSWORD must be set and at least 12 characters")
+	}
+	users, err := loadUsers()
+	if err != nil {
+		log.Fatalf("loadUsers: %v", err)
+	}
+
 	verdictEngineURL := os.Getenv("VERDICT_ENGINE_URL")
 	if verdictEngineURL == "" {
 		verdictEngineURL = "http://localhost:8000"
@@ -24,16 +32,9 @@ func main() {
 	mon.InitIsolatedState(initCtx)
 	initCancel()
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", healthHandler)
-	mux.HandleFunc("/api/samples", samplesHandler(dm, verdictEngineURL, hub))
-	mux.HandleFunc("/api/verdicts", verdictsListHandler(verdictEngineURL))
-	mux.HandleFunc("/api/verdicts/", verdictDetailHandler(verdictEngineURL))
-	mux.HandleFunc("/api/live", hub.HandleWS)
-	mux.HandleFunc("/api/monitor/status", monitorStatusHandler(mon))
-	mux.HandleFunc("/api/monitor/reconnect", monitorReconnectHandler(mon))
-	mux.HandleFunc("/api/hashes", hashesHandler(verdictEngineURL))
-	mux.HandleFunc("/api/hashes/", hashDecisionHandler(verdictEngineURL))
+	store := NewSessionStore()
+	limiter := NewLoginLimiter()
+	mux := newMux(dm, verdictEngineURL, hub, mon, store, users, limiter)
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -55,6 +56,24 @@ func main() {
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, store *SessionStore, users map[string]User, limiter *LoginLimiter) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", healthHandler)
+	mux.HandleFunc("/api/login", loginHandler(store, users, limiter))
+	mux.Handle("/api/logout", requireAuth(store)(logoutHandler(store)))
+	mux.Handle("/api/me", requireAuth(store)(meHandler()))
+	mux.Handle("/api/samples", requireAuth(store)(samplesHandler(dm, verdictEngineURL, hub)))
+	mux.Handle("/api/verdicts", requireAuth(store)(verdictsListHandler(verdictEngineURL)))
+	mux.Handle("/api/verdicts/", requireAuth(store)(verdictDetailHandler(verdictEngineURL)))
+	mux.Handle("/api/audit/verify", requireAuth(store)(chainVerifyHandler(verdictEngineURL)))
+	mux.Handle("/api/live", requireAuth(store)(http.HandlerFunc(hub.HandleWS)))
+	mux.Handle("/api/monitor/status", requireAuth(store)(monitorStatusHandler(mon)))
+	mux.Handle("/api/monitor/reconnect", requireAuth(store)(requireRole("admin")(monitorReconnectHandler(mon))))
+	mux.Handle("/api/hashes", requireAuth(store)(hashesHandler(verdictEngineURL)))
+	mux.Handle("/api/hashes/", requireAuth(store)(requireRole("admin")(hashDecisionHandler(verdictEngineURL))))
+	return mux
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
