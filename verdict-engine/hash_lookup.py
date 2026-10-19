@@ -1,20 +1,8 @@
-import json
-import os
 import re
-import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, List, Optional
 
-KNOWN_BAD_PATH = Path(
-    os.getenv("KNOWN_BAD_HASHES_PATH", str(Path(__file__).parent / "known_bad_hashes.json"))
-)
-
-# ponytail: a single process-wide lock, not per-file — Mirraura runs the
-# verdict-engine as one process with no multi-worker setup, so this is
-# sufficient. Move to file locking (e.g. fcntl) only if that assumption
-# changes.
-_LOCK = threading.Lock()
+import psycopg
 
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -35,81 +23,97 @@ def is_valid_hash(value: str) -> bool:
     return bool(_HASH_RE.fullmatch(value))
 
 
-def _load_all() -> List[dict]:
-    # KNOWN_BAD_PATH normally points at a Docker volume so approve/reject
-    # decisions survive container recreate; seed it from the image's bundled
-    # copy the first time only, then never touch the seed again.
-    if not KNOWN_BAD_PATH.exists():
-        KNOWN_BAD_PATH.parent.mkdir(parents=True, exist_ok=True)
-        seed_path = Path(__file__).parent / "known_bad_hashes.json"
-        KNOWN_BAD_PATH.write_text(seed_path.read_text())
-    with open(KNOWN_BAD_PATH) as f:
-        return json.load(f)
+def load_known_bad(pool) -> Dict[str, str]:
+    with pool.connection() as conn:
+        rows = conn.execute("SELECT hash, label FROM known_bad_hashes WHERE status = 'approved'").fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
-def _save_all(entries: List[dict]) -> None:
-    # Atomic: a kill mid-write must not leave a truncated file, which would make
-    # every later check_hash() (i.e. every /score) raise JSONDecodeError.
-    # os.replace (not os.rename) — atomic overwrite on Windows too.
-    tmp_path = KNOWN_BAD_PATH.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(entries, indent=2))
-    os.replace(tmp_path, KNOWN_BAD_PATH)
+def check_hash(pool, sample_hash: str) -> Optional[str]:
+    with pool.connection() as conn:
+        row = conn.execute(
+            "SELECT label FROM known_bad_hashes WHERE hash = %s AND status = 'approved'",
+            (sample_hash,),
+        ).fetchone()
+    return row[0] if row else None
 
 
-def load_known_bad() -> Dict[str, str]:
-    with _LOCK:
-        return {e["hash"]: e["label"] for e in _load_all() if e.get("status") == "approved"}
+def list_hashes(pool) -> List[dict]:
+    with pool.connection() as conn:
+        rows = conn.execute(
+            "SELECT hash, label, status, source, proposed_at, reviewed_at FROM known_bad_hashes ORDER BY proposed_at"
+        ).fetchall()
+    return [
+        {
+            "hash": r[0],
+            "label": r[1],
+            "status": r[2],
+            "source": r[3],
+            "proposed_at": r[4].isoformat(),
+            "reviewed_at": r[5].isoformat() if r[5] else None,
+        }
+        for r in rows
+    ]
 
 
-def check_hash(sample_hash: str, known_bad: Optional[Dict[str, str]] = None) -> Optional[str]:
-    known_bad = known_bad if known_bad is not None else load_known_bad()
-    return known_bad.get(sample_hash)
-
-
-def list_hashes() -> List[dict]:
-    with _LOCK:
-        return _load_all()
-
-
-def propose_hash(sample_hash: str, label: str, source: str) -> dict:
-    # Validated here, not in the route: /score's auto-propose path is unauthenticated
-    # and would otherwise write arbitrary strings into the known-bad store.
+def propose_hash(pool, sample_hash: str, label: str, source: str) -> dict:
+    # Validated here, not in the route: /score's auto-propose path is
+    # unauthenticated and would otherwise write arbitrary strings into the
+    # known-bad store.
     if not is_valid_hash(sample_hash):
         raise ValueError(f"not a valid sha256 hex hash: {sample_hash[:80]!r}")
-    with _LOCK:
-        entries = _load_all()
-        if any(e["hash"] == sample_hash for e in entries):
-            raise HashExistsError(sample_hash)
-        entry = {
-            "hash": sample_hash,
-            "label": label,
-            "status": "pending",
-            "source": source,
-            "proposed_at": datetime.now(timezone.utc).isoformat(),
-            "reviewed_at": None,
-        }
-        entries.append(entry)
-        _save_all(entries)
-        return entry
+    now = datetime.now(timezone.utc)
+    try:
+        with pool.connection() as conn:
+            conn.execute(
+                "INSERT INTO known_bad_hashes (hash, label, status, source, proposed_at) "
+                "VALUES (%s, %s, 'pending', %s, %s)",
+                (sample_hash, label, source, now),
+            )
+    except psycopg.errors.UniqueViolation as e:
+        raise HashExistsError(sample_hash) from e
+    return {
+        "hash": sample_hash,
+        "label": label,
+        "status": "pending",
+        "source": source,
+        "proposed_at": now.isoformat(),
+        "reviewed_at": None,
+    }
 
 
-def _decide(sample_hash: str, new_status: str) -> dict:
-    with _LOCK:
-        entries = _load_all()
-        for e in entries:
-            if e["hash"] == sample_hash:
-                if e["status"] != "pending":
-                    raise HashNotPendingError(sample_hash)
-                e["status"] = new_status
-                e["reviewed_at"] = datetime.now(timezone.utc).isoformat()
-                _save_all(entries)
-                return e
-        raise HashNotFoundError(sample_hash)
+def _decide(pool, sample_hash: str, new_status: str) -> dict:
+    now = datetime.now(timezone.utc)
+    with pool.connection() as conn:
+        with conn.transaction():
+            # SELECT ... FOR UPDATE serializes concurrent decisions on the
+            # same row -- the second caller blocks until the first commits,
+            # then sees status already changed and raises instead of
+            # double-applying.
+            row = conn.execute(
+                "SELECT status, label FROM known_bad_hashes WHERE hash = %s FOR UPDATE",
+                (sample_hash,),
+            ).fetchone()
+            if row is None:
+                raise HashNotFoundError(sample_hash)
+            status, label = row
+            if status != "pending":
+                raise HashNotPendingError(sample_hash)
+            conn.execute(
+                "UPDATE known_bad_hashes SET status = %s, reviewed_at = %s WHERE hash = %s",
+                (new_status, now, sample_hash),
+            )
+    return {
+        "hash": sample_hash,
+        "label": label,
+        "status": new_status,
+        "reviewed_at": now.isoformat(),
+    }
 
 
-def approve_hash(sample_hash: str) -> dict:
-    return _decide(sample_hash, "approved")
+def approve_hash(pool, sample_hash: str) -> dict:
+    return _decide(pool, sample_hash, "approved")
 
 
-def reject_hash(sample_hash: str) -> dict:
-    return _decide(sample_hash, "rejected")
+def reject_hash(pool, sample_hash: str) -> dict:
+    return _decide(pool, sample_hash, "rejected")
