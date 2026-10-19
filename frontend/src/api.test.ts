@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { approveHash, fetchChainStatus, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
+import { createUser, deleteUser, fetchUsers, updateUserRole } from "./api";
 import { applyLiveEvent, applyMonitorEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import { ApiError, request } from "./api";
 import { isValidSha256, sha256Hex } from "./api";
@@ -96,6 +97,48 @@ describe("api", () => {
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/hashes/abc123/reject"),
       expect.objectContaining({ method: "POST" })
+    );
+  });
+});
+
+describe("user management", () => {
+  it("fetchUsers calls the backend users endpoint", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => [{ username: "admin", role: "admin" }],
+    });
+    const result = await fetchUsers();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/users"),
+      expect.objectContaining({ credentials: "same-origin" })
+    );
+    expect(result).toEqual([{ username: "admin", role: "admin" }]);
+  });
+
+  it("createUser posts to the users endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await createUser("bob", "bobspassword123", "analyst");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/users"),
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("deleteUser deletes the specific user", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await deleteUser("bob");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/users/bob"),
+      expect.objectContaining({ method: "DELETE" })
+    );
+  });
+
+  it("updateUserRole patches the role endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await updateUserRole("bob", "admin");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/users/bob/role"),
+      expect.objectContaining({ method: "PATCH" })
     );
   });
 });

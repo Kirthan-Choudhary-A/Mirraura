@@ -19,6 +19,7 @@ import { Skeleton } from "./components/Skeleton";
 import { StatStrip } from "./components/StatStrip";
 import { TabPanel, Tabs } from "./components/Tabs";
 import { UploadPanel } from "./components/UploadPanel";
+import { UserManagement } from "./components/UserManagement";
 import { VerdictPanel } from "./components/VerdictPanel";
 import type { MirraEvent, Verdict } from "./types";
 
@@ -32,7 +33,7 @@ function App() {
   const [isolated, setIsolated] = useState(false);
   const [connState, setConnState] = useState<ConnectionState>("connecting");
   const [monitorError, setMonitorError] = useState<string | null>(null);
-  const [bottomTab, setBottomTab] = useState<"audit" | "hashes">("audit");
+  const [bottomTab, setBottomTab] = useState<"audit" | "hashes" | "users">("audit");
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
 
   // StatStrip's source data — owned by AuditLogTable/PendingHashApprovals
@@ -154,9 +155,10 @@ function App() {
               label: "Hash approvals",
               badge: pendingCount > 0 ? <span className="tabs__badge">{pendingCount}</span> : undefined,
             },
+            ...(role === "admin" ? [{ id: "users", label: "Users" }] : []),
           ]}
           active={bottomTab}
-          onChange={(id) => setBottomTab(id as "audit" | "hashes")}
+          onChange={(id) => setBottomTab(id as "audit" | "hashes" | "users")}
         />
         <TabPanel id="audit" active={bottomTab}>
           <AuditLogTable
@@ -174,6 +176,9 @@ function App() {
             onSessionExpired={handleSessionExpired}
             onHashesChange={setHashes}
           />
+        </TabPanel>
+        <TabPanel id="users" active={bottomTab}>
+          <UserManagement />
         </TabPanel>
       </section>
     </div>

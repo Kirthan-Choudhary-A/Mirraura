@@ -103,6 +103,32 @@ export async function rejectHash(hash: string): Promise<void> {
   await request(`/api/hashes/${hash}/reject`, { method: "POST" });
 }
 
+export type UserEntry = { username: string; role: "admin" | "analyst" };
+
+export async function fetchUsers(): Promise<UserEntry[]> {
+  return request("/api/users");
+}
+
+export async function createUser(username: string, password: string, role: "admin" | "analyst"): Promise<void> {
+  await request("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password, role }),
+  });
+}
+
+export async function deleteUser(username: string): Promise<void> {
+  await request(`/api/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+}
+
+export async function updateUserRole(username: string, role: "admin" | "analyst"): Promise<void> {
+  await request(`/api/users/${encodeURIComponent(username)}/role`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+}
+
 export type LiveMessage =
   | { type: "event"; source: "sample" | "monitor"; data: MirraEvent }
   | { type: "verdict"; source: "sample" | "monitor"; data: Verdict }
