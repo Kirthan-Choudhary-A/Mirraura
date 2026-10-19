@@ -14,7 +14,7 @@ func newTestSessionStore(t *testing.T) *SessionStore {
 	// globally, by filename, not per caller, so a different role name here
 	// would never actually get bootstrapped once another test file wins the
 	// race to apply 0001_create_sessions.sql first.
-	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
+	runtimeURL := testRuntimeURL(t, adminURL, "backend_role", "backend_test_pw")
 	ctx := context.Background()
 	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
 		t.Fatalf("RunMigrations: %v", err)

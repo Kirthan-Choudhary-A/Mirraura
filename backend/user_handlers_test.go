@@ -16,7 +16,7 @@ import (
 func newTestUsersPoolForHandlers(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	adminURL := testAdminURL(t)
-	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
+	runtimeURL := testRuntimeURL(t, adminURL, "backend_role", "backend_test_pw")
 	ctx := context.Background()
 	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
 		t.Fatalf("RunMigrations: %v", err)

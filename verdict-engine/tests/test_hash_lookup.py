@@ -4,6 +4,7 @@ import threading
 import pytest
 
 import hash_lookup
+from conftest import runtime_url_for_role
 from db import new_pool, run_migrations
 from hash_lookup import (
     HashExistsError,
@@ -26,7 +27,7 @@ def pool():
     admin_url = os.getenv("MIRRAURA_TEST_DATABASE_URL")
     if not admin_url:
         pytest.skip("MIRRAURA_TEST_DATABASE_URL not set; skipping Postgres-backed test")
-    runtime_url = "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura"
+    runtime_url = runtime_url_for_role(admin_url, "verdict_role", "verdict_test_pw")
     run_migrations(admin_url, runtime_url, "migrations")
     p = new_pool(runtime_url)
     with p.connection() as conn:

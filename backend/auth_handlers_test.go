@@ -22,7 +22,7 @@ func testAuthPool(t *testing.T) *pgxpool.Pool {
 	// Same shared role as session_test.go's newTestSessionStore -- see the
 	// comment there for why every test against the real migrations
 	// directory must agree on one role name.
-	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
+	runtimeURL := testRuntimeURL(t, adminURL, "backend_role", "backend_test_pw")
 	ctx := context.Background()
 	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
 		t.Fatalf("RunMigrations: %v", err)

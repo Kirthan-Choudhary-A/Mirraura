@@ -5,6 +5,7 @@ import psycopg
 import pytest
 
 from audit_log import AuditLog
+from conftest import runtime_url_for_role
 from db import new_pool, run_migrations
 
 GENESIS_HASH = "0" * 64
@@ -20,7 +21,7 @@ def admin_url():
 
 @pytest.fixture
 def pool(admin_url):
-    runtime_url = "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura"
+    runtime_url = runtime_url_for_role(admin_url, "verdict_role", "verdict_test_pw")
     run_migrations(admin_url, runtime_url, "migrations")
     p = new_pool(runtime_url)
     with psycopg.connect(admin_url, autocommit=True) as conn:

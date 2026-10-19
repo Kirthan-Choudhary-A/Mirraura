@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,22 @@ func testAdminURL(t *testing.T) string {
 	return url
 }
 
+// testRuntimeURL swaps adminURL's role/password for the given test role,
+// keeping its host/port/database. Tests used to hardcode
+// "localhost:5432/mirraura" for the runtime connection even when
+// MIRRAURA_TEST_DATABASE_URL pointed elsewhere, silently ignoring the env
+// var for half of every test's connections and risking collision with a
+// real dev stack on the same host/port/database.
+func testRuntimeURL(t *testing.T, adminURL, role, password string) string {
+	t.Helper()
+	u, err := url.Parse(adminURL)
+	if err != nil {
+		t.Fatalf("parse MIRRAURA_TEST_DATABASE_URL: %v", err)
+	}
+	u.User = url.UserPassword(role, password)
+	return u.String()
+}
+
 func writeMigration(t *testing.T, dir, name, sql string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(sql), 0644); err != nil {
@@ -25,7 +42,7 @@ func writeMigration(t *testing.T, dir, name, sql string) {
 
 func TestRunMigrationsAppliesInOrderAndIsIdempotent(t *testing.T) {
 	adminURL := testAdminURL(t)
-	runtimeURL := "postgres://db_test_role:db_test_pw@localhost:5432/mirraura"
+	runtimeURL := testRuntimeURL(t, adminURL, "db_test_role", "db_test_pw")
 	dir := t.TempDir()
 	writeMigration(t, dir, "0001_role.sql", `
 DO $$ BEGIN

@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 import psycopg
 import pytest
@@ -9,6 +10,22 @@ from db import run_migrations
 _TEST_EVENT_ARCHIVE = Path(__file__).parent / "test_event_archive.jsonl"
 _TEST_EVENT_ARCHIVE.unlink(missing_ok=True)
 os.environ["EVENT_ARCHIVE_PATH"] = str(_TEST_EVENT_ARCHIVE)
+
+
+def runtime_url_for_role(admin_url: str, role: str, password: str) -> str:
+    """Swaps admin_url's role/password for the given test role, keeping its
+    host/port/database. Tests used to hardcode "localhost:5432/mirraura" for
+    the runtime connection even when MIRRAURA_TEST_DATABASE_URL pointed
+    elsewhere, silently ignoring the env var for half of every test's
+    connections and risking collision with a real dev stack on the same
+    host/port/database.
+    """
+    parsed = urlparse(admin_url)
+    netloc = f"{role}:{password}@{parsed.hostname}"
+    if parsed.port:
+        netloc += f":{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
 
 # app.py requires this at import time (fail-fast, matching production) --
 # set it before any test module imports app, pointing at the same test
@@ -20,13 +37,11 @@ os.environ["EVENT_ARCHIVE_PATH"] = str(_TEST_EVENT_ARCHIVE)
 # verdict_role/the tables don't exist yet.
 _test_admin_url = os.environ.get("MIRRAURA_TEST_DATABASE_URL")
 if _test_admin_url:
-    os.environ.setdefault(
-        "VERDICT_DATABASE_URL",
-        "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura",
-    )
+    _runtime_url_for_role = runtime_url_for_role(_test_admin_url, "verdict_role", "verdict_test_pw")
+    os.environ.setdefault("VERDICT_DATABASE_URL", _runtime_url_for_role)
     run_migrations(
         _test_admin_url,
-        "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura",
+        _runtime_url_for_role,
         Path(__file__).parent.parent / "migrations",
     )
 

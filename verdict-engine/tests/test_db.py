@@ -5,6 +5,7 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from conftest import runtime_url_for_role
 from db import new_pool, run_migrations
 
 
@@ -17,7 +18,7 @@ def _test_admin_url():
 
 def test_run_migrations_applies_in_order_and_is_idempotent(tmp_path):
     admin_url = _test_admin_url()
-    runtime_url = "postgres://db_test_role_py:db_test_pw_py@localhost:5432/mirraura"
+    runtime_url = runtime_url_for_role(admin_url, "db_test_role_py", "db_test_pw_py")
     (tmp_path / "0001_role_py.sql").write_text(
         """
 DO $$ BEGIN
