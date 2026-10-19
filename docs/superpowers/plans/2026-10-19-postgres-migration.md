@@ -2082,6 +2082,7 @@ git commit -m "feat: move audit log to Postgres, restrict app role to insert+sel
 
 **Files:**
 - Modify: `verdict-engine/app.py`
+- Modify: `verdict-engine/tests/conftest.py`, `verdict-engine/tests/test_audit_log.py`, `verdict-engine/tests/test_hash_lookup.py` (test-isolation fixes, see Step 2's note — these only surface once `app.py` actually imports and uses `hash_lookup`/`audit_log` against the shared test Postgres, so this is the task where they show up)
 
 **Interfaces:**
 - Consumes: `new_pool`, `run_migrations` (Task 5), the new `pool`-taking signatures from Tasks 6-7.
@@ -2115,15 +2116,57 @@ logger = logging.getLogger(__name__)
 
 Then update every call site that currently calls a `hash_lookup` function to pass `_pool` as the first argument: `check_hash(req.sample_hash)` → `check_hash(_pool, req.sample_hash)`; `propose_hash(req.sample_hash, ...)` → `propose_hash(_pool, req.sample_hash, ...)`; `list_hashes()` → `list_hashes(_pool)`; `approve_hash(hash)` → `approve_hash(_pool, hash)`; `reject_hash(hash)` → `reject_hash(_pool, hash)`.
 
-- [ ] **Step 2: Run the full verdict-engine suite**
+- [ ] **Step 2: Run the full verdict-engine suite, then fix the test-isolation gaps it surfaces**
 
 Run: `MIRRAURA_TEST_DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@localhost:5432/mirraura" pytest tests/ -v`
-Expected: all PASS — this surfaces any remaining call site still using an old signature.
+
+This surfaces any remaining call site still using an old signature, but also three structural gaps — consequences of consolidating many isolated per-test-file flat files into a few shared Postgres tables, which removed the implicit test isolation those files provided:
+
+1. `app.py`'s module-level code now requires `VERDICT_DATABASE_URL`/`VERDICT_MIGRATIONS_DATABASE_URL` at import time. Nothing sets them before `tests/test_app.py` imports `app`. Fix in `verdict-engine/tests/conftest.py` — add after the existing `EVENT_ARCHIVE_PATH` line:
+   ```python
+   # app.py requires these at import time (fail-fast, matching production) --
+   # set them before any test module imports app, deriving from
+   # MIRRAURA_TEST_DATABASE_URL so app.py's migrations/pool point at the same
+   # test Postgres every other Postgres-backed test in this suite uses.
+   _test_admin_url = os.environ.get("MIRRAURA_TEST_DATABASE_URL")
+   if _test_admin_url:
+       os.environ.setdefault("VERDICT_MIGRATIONS_DATABASE_URL", _test_admin_url)
+       os.environ.setdefault(
+           "VERDICT_DATABASE_URL",
+           "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura",
+       )
+   ```
+
+2. The old flat-file `conftest.py` seeded the EICAR known-bad hash by copying `known_bad_hashes.json`; nothing replaced that seed once Task 6 moved known-bad-hashes to Postgres, so `test_app.py`'s EICAR tests have no known-bad hash to match. Fix — add to `conftest.py` (needs `import psycopg` and `import pytest` added to its imports): a session-scoped autouse fixture, since it must run *after* `app.py`'s module-level migrations have created the table (fixtures run at test-execution time, after all collection/imports finish):
+   ```python
+   @pytest.fixture(scope="session", autouse=True)
+   def _seed_known_bad_hashes():
+       admin_url = os.environ.get("MIRRAURA_TEST_DATABASE_URL")
+       if not admin_url:
+           yield
+           return
+       with psycopg.connect(admin_url, autocommit=True) as conn:
+           # Wipe leftovers from a previous run (test_app uses fixed hashes that
+           # would otherwise 409 on the second run), then seed EICAR.
+           conn.execute("DELETE FROM known_bad_hashes")
+           conn.execute(
+               "INSERT INTO known_bad_hashes (hash, label, status, source, proposed_at, reviewed_at) "
+               "VALUES (%s, %s, 'approved', 'manual', now(), now()) ON CONFLICT (hash) DO NOTHING",
+               ("275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f", "EICAR-Test-File"),
+           )
+       yield
+   ```
+   This collides with `tests/test_hash_lookup.py`'s own `pool` fixture, which independently seeds the same EICAR hash via `propose_hash`/`approve_hash` — that call now raises `HashExistsError` against the session seed. Fix: in that fixture, add `conn.execute("DELETE FROM known_bad_hashes")` (clearing the session-level seed) immediately after opening the pool, before its own `propose_hash` call.
+
+3. `tests/test_audit_log.py`'s `pool` fixture only truncated `audit_log` at teardown, not setup. `test_app.py` runs alphabetically first and inserts real rows into the same shared `audit_log` table via the real `/score` endpoint, so `test_audit_log.py`'s assumption of a pristine table (first entry's `prev_log_hash` is `GENESIS_HASH`) broke once the full suite ran together — even though every test in that file passed fine in isolation. Fix: add the same `TRUNCATE audit_log RESTART IDENTITY` (via a separate admin connection, same reasoning as Task 7's fix) at the *start* of the fixture too, not just at teardown.
+
+Run the suite twice back-to-back with no reset in between to confirm order-independence, not just a single lucky pass.
+Expected: all PASS, stable across both runs.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add verdict-engine/app.py
+git add verdict-engine/app.py verdict-engine/tests/conftest.py verdict-engine/tests/test_audit_log.py verdict-engine/tests/test_hash_lookup.py
 git commit -m "feat: wire Postgres pool and migrations into verdict-engine startup"
 ```
 
