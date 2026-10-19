@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -12,15 +13,28 @@ import (
 )
 
 func main() {
+	migrateOnly := flag.Bool("migrate-only", false, "apply pending migrations, then exit without starting the server")
+	flag.Parse()
 	ctx := context.Background()
 
-	backendDBURL := os.Getenv("BACKEND_DATABASE_URL")
-	backendMigrationsURL := os.Getenv("BACKEND_MIGRATIONS_DATABASE_URL")
-	if backendDBURL == "" || backendMigrationsURL == "" {
-		log.Fatal("BACKEND_DATABASE_URL and BACKEND_MIGRATIONS_DATABASE_URL must both be set")
+	// migrate-only mode is the only place BACKEND_MIGRATIONS_DATABASE_URL (the
+	// Postgres superuser) is used. The server itself never reads it, so it's
+	// never present in the long-running server container's environment.
+	if *migrateOnly {
+		backendMigrationsURL := os.Getenv("BACKEND_MIGRATIONS_DATABASE_URL")
+		backendDBURL := os.Getenv("BACKEND_DATABASE_URL")
+		if backendMigrationsURL == "" || backendDBURL == "" {
+			log.Fatal("BACKEND_MIGRATIONS_DATABASE_URL and BACKEND_DATABASE_URL must both be set")
+		}
+		if err := RunMigrations(ctx, backendMigrationsURL, backendDBURL, "migrations"); err != nil {
+			log.Fatalf("RunMigrations: %v", err)
+		}
+		return
 	}
-	if err := RunMigrations(ctx, backendMigrationsURL, backendDBURL, "migrations"); err != nil {
-		log.Fatalf("RunMigrations: %v", err)
+
+	backendDBURL := os.Getenv("BACKEND_DATABASE_URL")
+	if backendDBURL == "" {
+		log.Fatal("BACKEND_DATABASE_URL must be set")
 	}
 	pool, err := NewPool(ctx, backendDBURL)
 	if err != nil {

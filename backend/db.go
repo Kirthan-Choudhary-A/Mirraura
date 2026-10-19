@@ -41,6 +41,14 @@ func roleCredentials(databaseURL string) (username, password string, err error) 
 	return u.User.Username(), pw, nil
 }
 
+// migrationsLockKey is a session-level Postgres advisory lock held for the
+// duration of RunMigrations. Both backend and verdict-engine migrations
+// apply against the same schema_migrations table in the same database, so
+// without this, docker-compose starting both one-shot migrate services at
+// once races on "CREATE TABLE IF NOT EXISTS schema_migrations" itself. Must
+// match verdict-engine/db.py's MIGRATIONS_LOCK_KEY.
+const migrationsLockKey = 7418529630
+
 // RunMigrations applies every *.sql file in dir, in filename order, not yet
 // recorded in schema_migrations. adminURL must have CREATE/GRANT privileges;
 // runtimeURL's own role/password are substituted for {{ROLE_NAME}}/
@@ -57,7 +65,21 @@ func RunMigrations(ctx context.Context, adminURL, runtimeURL, dir string) error 
 	}
 	defer pool.Close()
 
-	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
+	// Every statement below must run on this one connection: the advisory
+	// lock is session-scoped, so acquiring it on one pooled connection and
+	// then issuing later statements through pool.Exec (which may hand out a
+	// different connection) wouldn't actually serialize anything.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire admin connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationsLockKey); err != nil {
+		return fmt.Errorf("acquire migrations lock: %w", err)
+	}
+
+	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
@@ -75,7 +97,7 @@ func RunMigrations(ctx context.Context, adminURL, runtimeURL, dir string) error 
 
 	for _, name := range files {
 		var applied bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, name).Scan(&applied); err != nil {
+		if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, name).Scan(&applied); err != nil {
 			return fmt.Errorf("check migration %s: %w", name, err)
 		}
 		if applied {
@@ -90,7 +112,7 @@ func RunMigrations(ctx context.Context, adminURL, runtimeURL, dir string) error 
 			"{{ROLE_PASSWORD}}", rolePassword,
 		).Replace(string(raw))
 
-		tx, err := pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("begin tx for %s: %w", name, err)
 		}

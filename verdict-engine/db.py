@@ -12,6 +12,15 @@ def new_pool(database_url: str) -> ConnectionPool:
     return pool
 
 
+# Session-level Postgres advisory lock held for the duration of
+# run_migrations. Both backend and verdict-engine migrations apply against
+# the same schema_migrations table in the same database, so without this,
+# docker-compose starting both one-shot migrate services at once races on
+# "CREATE TABLE IF NOT EXISTS schema_migrations" itself. Must match
+# backend/db.go's migrationsLockKey.
+MIGRATIONS_LOCK_KEY = 7418529630
+
+
 def _role_credentials(database_url: str) -> tuple[str, str]:
     parsed = urlparse(database_url)
     if not parsed.username:
@@ -30,6 +39,7 @@ def run_migrations(admin_url: str, runtime_url: str, migrations_dir: Path) -> No
 
     with psycopg.connect(admin_url, autocommit=False) as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(%s)", (MIGRATIONS_LOCK_KEY,))
             cur.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations "
                 "(version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"

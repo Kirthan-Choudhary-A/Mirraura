@@ -1,6 +1,26 @@
 name: mirraura
 
 services:
+  backend-migrate:
+    build: ./backend
+    command: ["./backend", "-migrate-only"]
+    environment:
+      - BACKEND_DATABASE_URL=postgres://backend_role:${BACKEND_DB_PASSWORD}@postgres:5432/mirraura
+      - BACKEND_MIGRATIONS_DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/mirraura
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  verdict-migrate:
+    build: ./verdict-engine
+    command: ["python", "migrate.py"]
+    environment:
+      - VERDICT_DATABASE_URL=postgres://verdict_role:${VERDICT_DB_PASSWORD}@postgres:5432/mirraura
+      - VERDICT_MIGRATIONS_DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/mirraura
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   backend:
     build: ./backend
     environment:
@@ -10,11 +30,12 @@ services:
       - MIRRAURA_ADMIN_PASSWORD=${MIRRAURA_ADMIN_PASSWORD}
       - MIRRAURA_USERS_PATH=${MIRRAURA_USERS_PATH:-}
       - BACKEND_DATABASE_URL=postgres://backend_role:${BACKEND_DB_PASSWORD}@postgres:5432/mirraura
-      - BACKEND_MIGRATIONS_DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/mirraura
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./users.json:/app/users.json:ro
     depends_on:
+      backend-migrate:
+        condition: service_completed_successfully
       verdict-engine:
         condition: service_started
       postgres:
@@ -27,12 +48,13 @@ services:
       - KNOWN_BAD_HASHES_PATH=/data/known_bad_hashes.json
       - EVENT_ARCHIVE_PATH=/data/event_archive.jsonl
       - VERDICT_DATABASE_URL=postgres://verdict_role:${VERDICT_DB_PASSWORD}@postgres:5432/mirraura
-      - VERDICT_MIGRATIONS_DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/mirraura
     volumes:
       - audit-log-data:/data
       - ./verdict-engine/revalidation_candidates:/app/revalidation_candidates
       - ./verdict-engine/revalidation_reports:/app/revalidation_reports
     depends_on:
+      verdict-migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
 

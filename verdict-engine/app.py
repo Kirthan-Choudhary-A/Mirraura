@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from audit_log import AuditLog
-from db import new_pool, run_migrations
+from db import new_pool
 from event_archive import EventArchive
 from hash_lookup import (
     HashExistsError,
@@ -28,10 +28,8 @@ from schemas import Event, Verdict
 app = FastAPI()
 
 _verdict_db_url = os.getenv("VERDICT_DATABASE_URL")
-_verdict_migrations_url = os.getenv("VERDICT_MIGRATIONS_DATABASE_URL")
-if not _verdict_db_url or not _verdict_migrations_url:
-    raise RuntimeError("VERDICT_DATABASE_URL and VERDICT_MIGRATIONS_DATABASE_URL must both be set")
-run_migrations(_verdict_migrations_url, _verdict_db_url, Path(__file__).parent / "migrations")
+if not _verdict_db_url:
+    raise RuntimeError("VERDICT_DATABASE_URL must be set")
 _pool = new_pool(_verdict_db_url)
 
 audit_log = AuditLog(_pool)

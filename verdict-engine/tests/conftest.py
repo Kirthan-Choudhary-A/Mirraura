@@ -10,16 +10,24 @@ _TEST_EVENT_ARCHIVE = Path(__file__).parent / "test_event_archive.jsonl"
 _TEST_EVENT_ARCHIVE.unlink(missing_ok=True)
 os.environ["EVENT_ARCHIVE_PATH"] = str(_TEST_EVENT_ARCHIVE)
 
-# app.py requires these at import time (fail-fast, matching production) --
-# set them before any test module imports app, deriving from
-# MIRRAURA_TEST_DATABASE_URL so app.py's migrations/pool point at the same
-# test Postgres every other Postgres-backed test in this suite uses.
+# app.py requires this at import time (fail-fast, matching production) --
+# set it before any test module imports app, pointing at the same test
+# Postgres every other Postgres-backed test in this suite uses. app.py no
+# longer runs migrations itself (that's now the standalone migrate.py's job,
+# so the admin credential never reaches the long-running app process), so
+# this module -- loaded by pytest before any test module is collected --
+# must apply them here instead, or app.py's own pool.wait() fails because
+# verdict_role/the tables don't exist yet.
 _test_admin_url = os.environ.get("MIRRAURA_TEST_DATABASE_URL")
 if _test_admin_url:
-    os.environ.setdefault("VERDICT_MIGRATIONS_DATABASE_URL", _test_admin_url)
     os.environ.setdefault(
         "VERDICT_DATABASE_URL",
         "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura",
+    )
+    run_migrations(
+        _test_admin_url,
+        "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura",
+        Path(__file__).parent.parent / "migrations",
     )
 
 
@@ -29,13 +37,6 @@ def _seed_known_bad_hashes():
     if not admin_url:
         yield
         return
-    # Run migrations here too so this fixture doesn't depend on test_app.py having
-    # been collected first. Absolute path so cwd doesn't matter.
-    run_migrations(
-        admin_url,
-        "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura",
-        Path(__file__).parent.parent / "migrations",
-    )
     with psycopg.connect(admin_url, autocommit=True) as conn:
         # Wipe leftovers from a previous run (test_app uses fixed hashes that would
         # otherwise 409 on the second run), then seed EICAR. audit_log too:
