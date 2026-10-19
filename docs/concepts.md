@@ -97,6 +97,8 @@ No public sign-up — this is a security tool, not a public service. Exactly one
 
 **Postgres (local dev stack, `docker-compose.yml`)** — A real relational database server, added as a compose service (`postgres:16-alpine`) so the data stores can move off flat files and in-memory maps (which can't survive a restart or be shared between backend instances). The service runs in the stack now; the app reads and writes it only once the migration tasks that follow are in.
 
+**pgx (`github.com/jackc/pgx/v5`, Go Postgres driver)** — The most widely used native Postgres driver for Go. Chosen over `database/sql` with a generic driver because it speaks Postgres's own wire protocol directly and handles Postgres-specific types (timestamps, JSON, arrays) without hand-written conversions. `pgxpool` (its built-in connection pool) keeps a reusable set of connections open so each request doesn't pay the connect cost. `backend/db.go` wraps it in two helpers: `NewPool` (open and ping the pool) and `RunMigrations` (apply the `.sql` files in order, recording each one in a `schema_migrations` table so reruns skip what's already applied).
+
 **Docker** — Provides both the "dummy network" (a Docker network) and the "shadow node" (a container) without needing real virtual machines or hypervisor setup. Makes the whole loop scriptable and demoable on a single laptop.
 
 **Docker Compose (portability)** — A single YAML file (`docker-compose.yml`, `name: mirraura`) describing every service and how they connect. Anyone with Docker installed runs `docker compose up --build` (via `setup.sh`, which also builds the shadow image first) and gets the identical setup — same versions, same config, no per-teammate manual installs. This is what makes the project run identically on any machine.
