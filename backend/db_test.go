@@ -50,7 +50,7 @@ GRANT SELECT, INSERT ON db_test_table TO {{ROLE_NAME}};
 		t.Fatalf("NewPool: %v", err)
 	}
 	defer pool.Close()
-	defer pool.Exec(ctx, "DROP TABLE IF EXISTS db_test_table; DROP ROLE IF EXISTS db_test_role;")
+	defer pool.Exec(ctx, "DROP TABLE IF EXISTS db_test_table; DROP ROLE IF EXISTS db_test_role; DELETE FROM schema_migrations WHERE version = '0001_role.sql';")
 
 	var applied int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations WHERE version = '0001_role.sql'").Scan(&applied); err != nil {
