@@ -6,7 +6,7 @@
 
 **Architecture:** Go backend and Python verdict-engine each get their own Postgres connection pair (an admin URL for migrations, a least-privilege-role URL for runtime traffic) against one shared Postgres instance. Each service keeps owning its own tables — no cross-service table access. Migrations are plain numbered `.sql` files applied by a small runner at startup.
 
-**Tech Stack:** Postgres 16 (docker-compose `postgres` service), `github.com/jackc/pgx/v5` (Go), `psycopg[binary]` v3 (Python).
+**Tech Stack:** Postgres 16 (docker-compose `postgres` service), `github.com/jackc/pgx/v5` (Go), `psycopg[binary,pool]` v3 (Python).
 
 **Spec:** `docs/superpowers/specs/2026-10-19-postgres-migration-design.md`
 
@@ -1418,7 +1418,7 @@ git commit -m "feat: runtime user management, refuse removing the last admin, fi
 
 - [ ] **Step 1: Add the psycopg dependency**
 
-Add to `verdict-engine/requirements.txt`: `psycopg[binary]==3.2.3`
+Add to `verdict-engine/requirements.txt`: `psycopg[binary,pool]==3.2.3` (the `pool` extra is required — `db.py` below imports `psycopg_pool.ConnectionPool`, which `psycopg[binary]` alone doesn't pull in).
 
 Run: `cd verdict-engine && pip install -r requirements.txt`
 
