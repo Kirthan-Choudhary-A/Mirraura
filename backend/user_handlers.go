@@ -63,7 +63,7 @@ func createUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			http.Error(w, "username already exists", http.StatusConflict)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

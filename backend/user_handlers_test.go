@@ -46,8 +46,8 @@ func TestCreateUserHandler(t *testing.T) {
 
 	createUserHandler(pool)(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
 	}
 	user, err := GetUser(context.Background(), pool, "bob")
 	if err != nil {

@@ -116,7 +116,7 @@ describe("user management", () => {
   });
 
   it("createUser posts to the users endpoint", async () => {
-    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
     await createUser("bob", "bobspassword123", "analyst");
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/users"),
