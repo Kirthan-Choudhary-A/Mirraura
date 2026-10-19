@@ -9,11 +9,16 @@ services:
       - MIRRAURA_ADMIN_USER=${MIRRAURA_ADMIN_USER}
       - MIRRAURA_ADMIN_PASSWORD=${MIRRAURA_ADMIN_PASSWORD}
       - MIRRAURA_USERS_PATH=${MIRRAURA_USERS_PATH:-}
+      - BACKEND_DATABASE_URL=postgres://backend_role:${BACKEND_DB_PASSWORD}@postgres:5432/mirraura
+      - BACKEND_MIGRATIONS_DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/mirraura
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./users.json:/app/users.json:ro
     depends_on:
-      - verdict-engine
+      verdict-engine:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   verdict-engine:
     build: ./verdict-engine
@@ -21,10 +26,29 @@ services:
       - AUDIT_LOG_PATH=/data/audit_log.jsonl
       - KNOWN_BAD_HASHES_PATH=/data/known_bad_hashes.json
       - EVENT_ARCHIVE_PATH=/data/event_archive.jsonl
+      - VERDICT_DATABASE_URL=postgres://verdict_role:${VERDICT_DB_PASSWORD}@postgres:5432/mirraura
+      - VERDICT_MIGRATIONS_DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/mirraura
     volumes:
       - audit-log-data:/data
       - ./verdict-engine/revalidation_candidates:/app/revalidation_candidates
       - ./verdict-engine/revalidation_reports:/app/revalidation_reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=mirraura
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   frontend:
     build: ./frontend
@@ -41,6 +65,7 @@ services:
 
 volumes:
   audit-log-data:
+  postgres-data:
 
 networks:
   monitor-net:
