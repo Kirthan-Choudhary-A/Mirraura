@@ -16,6 +16,7 @@ Mirraura actually ships **two** independent detection paths that both feed the s
 - A **Rust** sensor runs inside the shadow container, traces the sample's syscalls via `strace`, and reports what it saw in a common event format.
 - A **Python** poller (`monitored-endpoint/poller.py`) runs inside the always-on monitored container, snapshotting processes/connections/files every cycle and diffing against the previous cycle to find what's new — see "Continuous behavioral monitoring" below for why this is a different capture mechanism than `strace`.
 - A **React + TypeScript** dashboard shows the live event feed, the verdict, and the audit log in real time, plus an isolation banner and a "Reconnect" control for the continuous-monitoring path.
+- A **Postgres** database holds all of the backend's and verdict engine's persistent state — sessions, users, known-bad hashes, and the hash-chained audit log — replacing the old flat files and in-memory session map. Each service connects as its own least-privilege role (see the Postgres migration entry below).
 - Everything ships as one **Docker Compose** stack (`docker compose up --build`) so it runs identically on any teammate's machine.
 
 See "The loop, in one sentence each" and "The continuous-monitoring loop, in one sentence each" at the bottom of this file for the two request-to-verdict walkthroughs, and the design spec (`docs/superpowers/specs/2026-09-07-mirraura-design.md`) for the complete requirements this was built against.
