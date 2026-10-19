@@ -29,6 +29,9 @@ def pool():
     runtime_url = "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura"
     run_migrations(admin_url, runtime_url, "migrations")
     p = new_pool(runtime_url)
+    with p.connection() as conn:
+        conn.execute("DELETE FROM known_bad_hashes")  # clear the session-level EICAR seed from conftest
+        conn.commit()
     propose_hash(p, EICAR_HASH, "EICAR-Test-File", source="manual")
     approve_hash(p, EICAR_HASH)
     yield p

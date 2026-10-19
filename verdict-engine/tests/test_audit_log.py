@@ -23,6 +23,8 @@ def pool(admin_url):
     runtime_url = "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura"
     run_migrations(admin_url, runtime_url, "migrations")
     p = new_pool(runtime_url)
+    with psycopg.connect(admin_url, autocommit=True) as conn:
+        conn.execute("TRUNCATE audit_log RESTART IDENTITY")
     yield p
     p.close()
     # verdict_role has no DELETE grant on audit_log (that's the point of this
