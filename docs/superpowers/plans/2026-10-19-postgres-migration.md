@@ -1867,6 +1867,11 @@ CREATE INDEX IF NOT EXISTS audit_log_entry_hash_idx ON audit_log (entry_hash);
 -- verdict_role can append and read, but never edit or delete a past entry --
 -- this is the actual tamper-evidence improvement over the old flat file.
 GRANT SELECT, INSERT ON audit_log TO {{ROLE_NAME}};
+-- INSERT into a BIGSERIAL column calls nextval() on its backing sequence,
+-- which needs its own USAGE grant -- this only lets the role advance the
+-- counter, not read/alter audit_log rows, so it doesn't touch the
+-- no-UPDATE/DELETE property above.
+GRANT USAGE ON SEQUENCE audit_log_id_seq TO {{ROLE_NAME}};
 ```
 
 - [ ] **Step 2: Write the failing tests**
@@ -1900,10 +1905,15 @@ def pool(admin_url):
     run_migrations(admin_url, runtime_url, "migrations")
     p = new_pool(runtime_url)
     yield p
-    with p.connection() as conn:
-        conn.execute("DELETE FROM audit_log")
-        conn.commit()
     p.close()
+    # Cleanup can't go through p itself -- verdict_role has no DELETE grant
+    # on audit_log (that's the whole point of this task), so a DELETE issued
+    # through the runtime pool would fail with the exact InsufficientPrivilege
+    # error the tests are proving exists. Use the admin connection instead,
+    # and TRUNCATE ... RESTART IDENTITY rather than DELETE so the BIGSERIAL
+    # sequence resets too -- several tests below assert against id = 1.
+    with psycopg.connect(admin_url, autocommit=True) as conn:
+        conn.execute("TRUNCATE audit_log RESTART IDENTITY")
 
 
 def test_append_and_read_back(pool):
