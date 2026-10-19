@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -22,18 +24,38 @@ func withEnv(t *testing.T, key, value string) {
 	})
 }
 
-func TestLoadUsersSeedsAdminFromEnv(t *testing.T) {
+func newTestUsersPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	adminURL := testAdminURL(t)
+	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
+	ctx := context.Background()
+	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+	pool, err := NewPool(ctx, runtimeURL)
+	if err != nil {
+		t.Fatalf("NewPool(runtime): %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, "DELETE FROM users")
+		pool.Close()
+	})
+	return pool
+}
+
+func TestSeedUsersSeedsAdminFromEnv(t *testing.T) {
+	pool := newTestUsersPool(t)
 	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
 	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
 	withEnv(t, "MIRRAURA_USERS_PATH", "")
+	ctx := context.Background()
 
-	users, err := loadUsers()
-	if err != nil {
-		t.Fatalf("loadUsers: %v", err)
+	if err := SeedUsers(ctx, pool); err != nil {
+		t.Fatalf("SeedUsers: %v", err)
 	}
-	admin, ok := users["admin"]
-	if !ok {
-		t.Fatal("expected admin user to be seeded")
+	admin, err := GetUser(ctx, pool, "admin")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
 	}
 	if admin.Role != "admin" {
 		t.Fatalf("expected role admin, got %q", admin.Role)
@@ -43,27 +65,46 @@ func TestLoadUsersSeedsAdminFromEnv(t *testing.T) {
 	}
 }
 
-func TestLoadUsersRejectsShortPassword(t *testing.T) {
+func TestSeedUsersRejectsShortPassword(t *testing.T) {
+	pool := newTestUsersPool(t)
 	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
 	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "short")
 	withEnv(t, "MIRRAURA_USERS_PATH", "")
 
-	if _, err := loadUsers(); err == nil {
+	if err := SeedUsers(context.Background(), pool); err == nil {
 		t.Fatal("expected an error for a password shorter than 12 characters")
 	}
 }
 
-func TestLoadUsersRejectsMissingAdminEnv(t *testing.T) {
-	withEnv(t, "MIRRAURA_ADMIN_USER", "")
-	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "")
+func TestSeedUsersIsIdempotent(t *testing.T) {
+	pool := newTestUsersPool(t)
+	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
+	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
 	withEnv(t, "MIRRAURA_USERS_PATH", "")
+	ctx := context.Background()
 
-	if _, err := loadUsers(); err == nil {
-		t.Fatal("expected an error when admin env vars are unset")
+	if err := SeedUsers(ctx, pool); err != nil {
+		t.Fatalf("first seed: %v", err)
+	}
+	// A runtime admin action changes the seeded admin's role; re-seeding
+	// (e.g. on restart) must not clobber it back.
+	if _, err := pool.Exec(ctx, "UPDATE users SET role = 'analyst' WHERE username = 'admin'"); err != nil {
+		t.Fatalf("simulate runtime change: %v", err)
+	}
+	if err := SeedUsers(ctx, pool); err != nil {
+		t.Fatalf("second seed: %v", err)
+	}
+	admin, err := GetUser(ctx, pool, "admin")
+	if err != nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if admin.Role != "analyst" {
+		t.Fatalf("expected re-seeding to leave the runtime-changed role alone, got %q", admin.Role)
 	}
 }
 
-func TestLoadUsersMergesUsersJSON(t *testing.T) {
+func TestSeedUsersMergesUsersJSON(t *testing.T) {
+	pool := newTestUsersPool(t)
 	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
 	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
 
@@ -77,92 +118,18 @@ func TestLoadUsersMergesUsersJSON(t *testing.T) {
 		{"username": "alice", "bcrypt_hash": string(hash), "role": "analyst"},
 	}
 	data, _ := json.Marshal(entries)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	os.WriteFile(path, data, 0644)
 	withEnv(t, "MIRRAURA_USERS_PATH", path)
+	ctx := context.Background()
 
-	users, err := loadUsers()
+	if err := SeedUsers(ctx, pool); err != nil {
+		t.Fatalf("SeedUsers: %v", err)
+	}
+	alice, err := GetUser(ctx, pool, "alice")
 	if err != nil {
-		t.Fatalf("loadUsers: %v", err)
+		t.Fatalf("GetUser(alice): %v", err)
 	}
-	if len(users) != 2 {
-		t.Fatalf("expected 2 users (admin + alice), got %d", len(users))
-	}
-	alice, ok := users["alice"]
-	if !ok || alice.Role != "analyst" {
-		t.Fatalf("expected alice with role analyst, got %+v (found=%v)", alice, ok)
-	}
-}
-
-func TestLoadUsersMissingUsersFileIsNotAnError(t *testing.T) {
-	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
-	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
-	withEnv(t, "MIRRAURA_USERS_PATH", filepath.Join(t.TempDir(), "does-not-exist.json"))
-
-	users, err := loadUsers()
-	if err != nil {
-		t.Fatalf("expected no error for a missing optional users file, got: %v", err)
-	}
-	if len(users) != 1 {
-		t.Fatalf("expected only the admin user, got %d", len(users))
-	}
-}
-
-func TestLoadUsersRejectsDuplicateUsername(t *testing.T) {
-	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
-	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "users.json")
-	hash, _ := bcrypt.GenerateFromPassword([]byte("whatever12345"), bcrypt.DefaultCost)
-	entries := []map[string]string{
-		{"username": "admin", "bcrypt_hash": string(hash), "role": "analyst"},
-	}
-	data, _ := json.Marshal(entries)
-	os.WriteFile(path, data, 0644)
-	withEnv(t, "MIRRAURA_USERS_PATH", path)
-
-	if _, err := loadUsers(); err == nil {
-		t.Fatal("expected an error for a users.json entry colliding with the env-seeded admin username")
-	}
-}
-
-func TestLoadUsersRejectsInvalidRole(t *testing.T) {
-	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
-	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "users.json")
-	hash, _ := bcrypt.GenerateFromPassword([]byte("whatever12345"), bcrypt.DefaultCost)
-	entries := []map[string]string{
-		{"username": "bob", "bcrypt_hash": string(hash), "role": "superadmin"},
-	}
-	data, _ := json.Marshal(entries)
-	os.WriteFile(path, data, 0644)
-	withEnv(t, "MIRRAURA_USERS_PATH", path)
-
-	if _, err := loadUsers(); err == nil {
-		t.Fatal("expected an error for a users.json entry with an invalid role")
-	}
-}
-
-func TestLoadUsersRejectsDuplicateUsernameWithinUsersJSON(t *testing.T) {
-	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
-	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "users.json")
-	hash, _ := bcrypt.GenerateFromPassword([]byte("whatever12345"), bcrypt.DefaultCost)
-	entries := []map[string]string{
-		{"username": "alice", "bcrypt_hash": string(hash), "role": "analyst"},
-		{"username": "alice", "bcrypt_hash": string(hash), "role": "analyst"},
-	}
-	data, _ := json.Marshal(entries)
-	os.WriteFile(path, data, 0644)
-	withEnv(t, "MIRRAURA_USERS_PATH", path)
-
-	if _, err := loadUsers(); err == nil {
-		t.Fatal("expected an error for duplicate usernames within users.json")
+	if alice.Role != "analyst" {
+		t.Fatalf("expected alice with role analyst, got %+v", alice)
 	}
 }

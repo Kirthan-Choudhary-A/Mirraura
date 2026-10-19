@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -20,47 +22,81 @@ type userJSONEntry struct {
 	Role       string `json:"role"`
 }
 
-func loadUsers() (map[string]User, error) {
+// SeedUsers inserts the env-seeded admin and any optional users.json entries
+// into the users table, skipping any username that already exists -- a
+// one-time seed, not a continuous reload, so a runtime admin action
+// (promote/demote/remove) survives a restart.
+func SeedUsers(ctx context.Context, pool *pgxpool.Pool) error {
 	adminUser := os.Getenv("MIRRAURA_ADMIN_USER")
 	adminPassword := os.Getenv("MIRRAURA_ADMIN_PASSWORD")
 	if adminUser == "" {
-		return nil, fmt.Errorf("MIRRAURA_ADMIN_USER must be set")
+		return fmt.Errorf("MIRRAURA_ADMIN_USER must be set")
 	}
 	if len(adminPassword) < 12 {
-		return nil, fmt.Errorf("MIRRAURA_ADMIN_PASSWORD must be at least 12 characters")
+		return fmt.Errorf("MIRRAURA_ADMIN_PASSWORD must be at least 12 characters")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, fmt.Errorf("hash admin password: %w", err)
+		return fmt.Errorf("hash admin password: %w", err)
 	}
-
-	users := map[string]User{
-		adminUser: {Username: adminUser, PasswordHash: string(hash), Role: "admin"},
+	if err := upsertUserIfAbsent(ctx, pool, adminUser, string(hash), "admin"); err != nil {
+		return fmt.Errorf("seed admin: %w", err)
 	}
 
 	usersPath := os.Getenv("MIRRAURA_USERS_PATH")
 	if usersPath == "" {
-		return users, nil
+		return nil
 	}
 	data, err := os.ReadFile(usersPath)
 	if os.IsNotExist(err) {
-		return users, nil
+		return nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", usersPath, err)
+		return fmt.Errorf("read %s: %w", usersPath, err)
 	}
 	var entries []userJSONEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", usersPath, err)
+		return fmt.Errorf("parse %s: %w", usersPath, err)
 	}
 	for _, e := range entries {
 		if e.Role != "admin" && e.Role != "analyst" {
-			return nil, fmt.Errorf("%s: user %q has invalid role %q (must be admin or analyst)", usersPath, e.Username, e.Role)
+			return fmt.Errorf("%s: user %q has invalid role %q (must be admin or analyst)", usersPath, e.Username, e.Role)
 		}
-		if _, exists := users[e.Username]; exists {
-			return nil, fmt.Errorf("%s: duplicate username %q", usersPath, e.Username)
+		if err := upsertUserIfAbsent(ctx, pool, e.Username, e.BcryptHash, e.Role); err != nil {
+			return fmt.Errorf("seed %s: %w", e.Username, err)
 		}
-		users[e.Username] = User{Username: e.Username, PasswordHash: e.BcryptHash, Role: e.Role}
 	}
-	return users, nil
+	return nil
+}
+
+func upsertUserIfAbsent(ctx context.Context, pool *pgxpool.Pool, username, passwordHash, role string) error {
+	_, err := pool.Exec(ctx,
+		`INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) ON CONFLICT (username) DO NOTHING`,
+		username, passwordHash, role,
+	)
+	return err
+}
+
+func GetUser(ctx context.Context, pool *pgxpool.Pool, username string) (User, error) {
+	var u User
+	u.Username = username
+	err := pool.QueryRow(ctx, `SELECT password_hash, role FROM users WHERE username = $1`, username).Scan(&u.PasswordHash, &u.Role)
+	return u, err
+}
+
+func ListUsers(ctx context.Context, pool *pgxpool.Pool) ([]User, error) {
+	rows, err := pool.Query(ctx, `SELECT username, password_hash, role FROM users ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.Username, &u.PasswordHash, &u.Role); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
 }

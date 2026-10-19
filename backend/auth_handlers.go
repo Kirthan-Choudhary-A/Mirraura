@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -83,7 +84,7 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
-func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimiter) http.HandlerFunc {
+func loginHandler(store *SessionStore, pool *pgxpool.Pool, limiter *LoginLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -102,7 +103,8 @@ func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimi
 			return
 		}
 
-		user, ok := users[req.Username]
+		user, err := GetUser(r.Context(), pool, req.Username)
+		ok := err == nil
 		hash := dummyPasswordHash
 		if ok {
 			hash = []byte(user.PasswordHash)

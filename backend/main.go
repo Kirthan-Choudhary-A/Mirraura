@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -25,12 +27,8 @@ func main() {
 		log.Fatalf("NewPool: %v", err)
 	}
 
-	if len(os.Getenv("MIRRAURA_ADMIN_PASSWORD")) < 12 {
-		log.Fatal("MIRRAURA_ADMIN_PASSWORD must be set and at least 12 characters")
-	}
-	users, err := loadUsers()
-	if err != nil {
-		log.Fatalf("loadUsers: %v", err)
+	if err := SeedUsers(ctx, pool); err != nil {
+		log.Fatalf("SeedUsers: %v", err)
 	}
 
 	verdictEngineURL := os.Getenv("VERDICT_ENGINE_URL")
@@ -49,7 +47,7 @@ func main() {
 
 	store := NewSessionStore(pool)
 	limiter := NewLoginLimiter()
-	mux := newMux(dm, verdictEngineURL, hub, mon, store, users, limiter)
+	mux := newMux(dm, verdictEngineURL, hub, mon, store, pool, limiter)
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -85,10 +83,10 @@ func main() {
 	}
 }
 
-func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, store *SessionStore, users map[string]User, limiter *LoginLimiter) *http.ServeMux {
+func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, store *SessionStore, pool *pgxpool.Pool, limiter *LoginLimiter) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)
-	mux.HandleFunc("/api/login", loginHandler(store, users, limiter))
+	mux.HandleFunc("/api/login", loginHandler(store, pool, limiter))
 	mux.Handle("/api/logout", requireAuth(store)(logoutHandler(store)))
 	mux.Handle("/api/me", requireAuth(store)(meHandler()))
 	mux.Handle("/api/samples", requireAuth(store)(samplesHandler(dm, verdictEngineURL, hub)))
@@ -100,7 +98,29 @@ func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, 
 	mux.Handle("/api/monitor/reconnect", requireAuth(store)(requireRole("admin")(monitorReconnectHandler(mon))))
 	mux.Handle("/api/hashes", requireAuth(store)(hashesHandler(verdictEngineURL)))
 	mux.Handle("/api/hashes/", requireAuth(store)(requireRole("admin")(hashDecisionHandler(verdictEngineURL))))
+	mux.Handle("/api/users", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
+		http.MethodGet:  listUsersHandler(pool),
+		http.MethodPost: createUserHandler(pool),
+	}))))
+	mux.Handle("/api/users/{username}", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
+		http.MethodDelete: deleteUserHandler(pool),
+	}))))
+	mux.Handle("/api/users/{username}/role", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
+		http.MethodPatch: updateUserRoleHandler(pool),
+	}))))
 	return mux
+}
+
+// dispatchByMethod routes to the handler registered for r.Method, or 405.
+func dispatchByMethod(byMethod map[string]http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h, ok := byMethod[r.Method]
+		if !ok {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h(w, r)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {

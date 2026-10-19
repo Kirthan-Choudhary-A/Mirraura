@@ -38,8 +38,9 @@ func testAuthPool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func testUsers(t *testing.T) map[string]User {
+func seedTestUsers(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
+	ctx := context.Background()
 	adminHash, err := bcrypt.GenerateFromPassword([]byte("adminpassword123"), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatalf("GenerateFromPassword: %v", err)
@@ -48,17 +49,24 @@ func testUsers(t *testing.T) map[string]User {
 	if err != nil {
 		t.Fatalf("GenerateFromPassword: %v", err)
 	}
-	return map[string]User{
-		"admin":   {Username: "admin", PasswordHash: string(adminHash), Role: "admin"},
-		"analyst": {Username: "analyst", PasswordHash: string(analystHash), Role: "analyst"},
+	if _, err := pool.Exec(ctx, "INSERT INTO users (username, password_hash, role) VALUES ('admin', $1, 'admin')", string(adminHash)); err != nil {
+		t.Fatalf("seed admin: %v", err)
 	}
+	if _, err := pool.Exec(ctx, "INSERT INTO users (username, password_hash, role) VALUES ('analyst', $1, 'analyst')", string(analystHash)); err != nil {
+		t.Fatalf("seed analyst: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, "DELETE FROM users")
+	})
 }
 
 func testMux(t *testing.T) *http.ServeMux {
 	t.Helper()
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	return newMux(nil, "http://unused", hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
+	return newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
 }
 
 func TestLoginSucceedsAndSetsCookie(t *testing.T) {
@@ -191,7 +199,9 @@ func TestAnalystGets403OnHashApprove(t *testing.T) {
 
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
-	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -215,7 +225,9 @@ func TestAdminCanApproveHash(t *testing.T) {
 
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
-	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -233,7 +245,9 @@ func TestAdminCanApproveHash(t *testing.T) {
 func TestWebSocketRejectedWithoutCookie(t *testing.T) {
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -254,7 +268,9 @@ func TestWebSocketRejectedWithoutCookie(t *testing.T) {
 func TestWebSocketAcceptedWithValidCookie(t *testing.T) {
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
