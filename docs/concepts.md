@@ -95,6 +95,8 @@ No public sign-up — this is a security tool, not a public service. Exactly one
 
 ## Tools & libraries — what and why
 
+**Postgres (local dev stack, `docker-compose.yml`)** — A real relational database server, added as a compose service (`postgres:16-alpine`) so the data stores can move off flat files and in-memory maps (which can't survive a restart or be shared between backend instances). The service runs in the stack now; the app reads and writes it only once the migration tasks that follow are in.
+
 **Docker** — Provides both the "dummy network" (a Docker network) and the "shadow node" (a container) without needing real virtual machines or hypervisor setup. Makes the whole loop scriptable and demoable on a single laptop.
 
 **Docker Compose (portability)** — A single YAML file (`docker-compose.yml`, `name: mirraura`) describing every service and how they connect. Anyone with Docker installed runs `docker compose up --build` (via `setup.sh`, which also builds the shadow image first) and gets the identical setup — same versions, same config, no per-teammate manual installs. This is what makes the project run identically on any machine.
