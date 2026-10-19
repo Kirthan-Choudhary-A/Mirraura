@@ -178,7 +178,7 @@ function App() {
           />
         </TabPanel>
         <TabPanel id="users" active={bottomTab}>
-          <UserManagement />
+          <UserManagement onSessionExpired={handleSessionExpired} />
         </TabPanel>
       </section>
     </div>

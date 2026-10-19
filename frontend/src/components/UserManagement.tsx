@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { createUser, deleteUser, fetchUsers, updateUserRole } from "../api";
+import { ApiError, createUser, deleteUser, fetchUsers, updateUserRole } from "../api";
 import type { UserEntry } from "../api";
 import { Card } from "./Card";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import "./UserManagement.css";
 
-export function UserManagement() {
+export function UserManagement({ onSessionExpired }: { onSessionExpired?: () => void }) {
   const [users, setUsers] = useState<UserEntry[]>([]);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -18,7 +18,10 @@ export function UserManagement() {
   function refetch() {
     fetchUsers()
       .then(setUsers)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load users"));
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 401) return onSessionExpired?.();
+        setError(e instanceof Error ? e.message : "failed to load users");
+      });
   }
 
   useEffect(refetch, []);
@@ -33,6 +36,7 @@ export function UserManagement() {
       refetch();
       push(`Created user ${username}`, "success");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return onSessionExpired?.();
       setError(err instanceof Error ? err.message : "failed to create user");
     }
   }
@@ -44,6 +48,7 @@ export function UserManagement() {
       refetch();
       push(`Removed user ${target}`, "success");
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return onSessionExpired?.();
       push(err instanceof Error ? err.message : "failed to remove user", "error");
     }
   }
@@ -53,6 +58,7 @@ export function UserManagement() {
       await updateUserRole(target, newRole);
       refetch();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return onSessionExpired?.();
       push(err instanceof Error ? err.message : "failed to change role", "error");
     }
   }
