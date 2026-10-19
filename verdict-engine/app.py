@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from audit_log import AuditLog
+from db import new_pool, run_migrations
 from event_archive import EventArchive
 from hash_lookup import (
     HashExistsError,
@@ -25,7 +26,15 @@ from rule_scorer import score_events, verdict_from_score
 from schemas import Event, Verdict
 
 app = FastAPI()
-audit_log = AuditLog(Path(os.getenv("AUDIT_LOG_PATH", "/data/audit_log.jsonl")))
+
+_verdict_db_url = os.getenv("VERDICT_DATABASE_URL")
+_verdict_migrations_url = os.getenv("VERDICT_MIGRATIONS_DATABASE_URL")
+if not _verdict_db_url or not _verdict_migrations_url:
+    raise RuntimeError("VERDICT_DATABASE_URL and VERDICT_MIGRATIONS_DATABASE_URL must both be set")
+run_migrations(_verdict_migrations_url, _verdict_db_url, Path(__file__).parent / "migrations")
+_pool = new_pool(_verdict_db_url)
+
+audit_log = AuditLog(_pool)
 event_archive = EventArchive(Path(os.getenv("EVENT_ARCHIVE_PATH", "/data/event_archive.jsonl")))
 logger = logging.getLogger(__name__)
 
@@ -69,7 +78,7 @@ def health():
 @app.post("/score", response_model=Verdict)
 def score(req: ScoreRequest):
     verdict_id = str(uuid.uuid4())
-    known_bad_label = check_hash(req.sample_hash)
+    known_bad_label = check_hash(_pool, req.sample_hash)
     if known_bad_label:
         verdict, confidence, chain = (
             "Compromised",
@@ -88,6 +97,7 @@ def score(req: ScoreRequest):
         if verdict == "Compromised" and req.source == "sample":
             try:
                 propose_hash(
+                    _pool,
                     req.sample_hash,
                     f"auto-proposed from verdict {verdict_id}",
                     source="auto",
@@ -166,7 +176,7 @@ def log_action(req: ActionRequest):
 
 @app.get("/hashes")
 def list_hashes_route():
-    return list_hashes()
+    return list_hashes(_pool)
 
 
 @app.post("/hashes")
@@ -174,7 +184,7 @@ def submit_hash_route(req: HashSubmitRequest):
     if not is_valid_hash(req.hash):
         raise HTTPException(status_code=400, detail="hash must be 64 lowercase hex characters")
     try:
-        return propose_hash(req.hash, req.label, source="manual")
+        return propose_hash(_pool, req.hash, req.label, source="manual")
     except HashExistsError:
         raise HTTPException(status_code=409, detail="hash already exists")
 
@@ -182,7 +192,7 @@ def submit_hash_route(req: HashSubmitRequest):
 @app.post("/hashes/{hash}/approve")
 def approve_hash_route(hash: str, req: HashDecisionRequest):
     try:
-        entry = approve_hash(hash)
+        entry = approve_hash(_pool, hash)
     except HashNotFoundError:
         raise HTTPException(status_code=404, detail="hash not found")
     except HashNotPendingError:
@@ -203,7 +213,7 @@ def approve_hash_route(hash: str, req: HashDecisionRequest):
 @app.post("/hashes/{hash}/reject")
 def reject_hash_route(hash: str, req: HashDecisionRequest):
     try:
-        entry = reject_hash(hash)
+        entry = reject_hash(_pool, hash)
     except HashNotFoundError:
         raise HTTPException(status_code=404, detail="hash not found")
     except HashNotPendingError:
