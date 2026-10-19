@@ -23,9 +23,11 @@ type userJSONEntry struct {
 }
 
 // SeedUsers inserts the env-seeded admin and any optional users.json entries
-// into the users table, skipping any username that already exists -- a
-// one-time seed, not a continuous reload, so a runtime admin action
-// (promote/demote/remove) survives a restart.
+// into the users table, but only when the table is completely empty -- a
+// one-time bootstrap, not a continuous reload. Once any user exists, the
+// runtime admin UI is the only way to manage users, so a runtime action
+// (promote/demote/remove, including removing the bootstrap admin) survives
+// a restart instead of being silently undone.
 func SeedUsers(ctx context.Context, pool *pgxpool.Pool) error {
 	adminUser := os.Getenv("MIRRAURA_ADMIN_USER")
 	adminPassword := os.Getenv("MIRRAURA_ADMIN_PASSWORD")
@@ -34,6 +36,13 @@ func SeedUsers(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	if len(adminPassword) < 12 {
 		return fmt.Errorf("MIRRAURA_ADMIN_PASSWORD must be at least 12 characters")
+	}
+	var existing int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&existing); err != nil {
+		return fmt.Errorf("count users: %w", err)
+	}
+	if existing > 0 {
+		return nil
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPassword), bcrypt.DefaultCost)
 	if err != nil {

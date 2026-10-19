@@ -18,7 +18,7 @@ def _test_admin_url():
 def test_run_migrations_applies_in_order_and_is_idempotent(tmp_path):
     admin_url = _test_admin_url()
     runtime_url = "postgres://db_test_role_py:db_test_pw_py@localhost:5432/mirraura"
-    (tmp_path / "0001_role.sql").write_text(
+    (tmp_path / "0001_role_py.sql").write_text(
         """
 DO $$ BEGIN
   EXECUTE 'CREATE ROLE {{ROLE_NAME}} LOGIN PASSWORD ''{{ROLE_PASSWORD}}''';
@@ -34,9 +34,9 @@ GRANT SELECT, INSERT ON db_test_table_py TO {{ROLE_NAME}};
 
     with psycopg.connect(admin_url) as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM schema_migrations WHERE version = %s", ("0001_role.sql",))
+            cur.execute("SELECT count(*) FROM schema_migrations WHERE version = %s", ("0001_role_py.sql",))
             assert cur.fetchone()[0] == 1
-            cur.execute("DROP TABLE IF EXISTS db_test_table_py; DROP ROLE IF EXISTS db_test_role_py; DELETE FROM schema_migrations WHERE version = '0001_role.sql';")
+            cur.execute("DROP TABLE IF EXISTS db_test_table_py; DROP ROLE IF EXISTS db_test_role_py; DELETE FROM schema_migrations WHERE version = '0001_role_py.sql';")
             conn.commit()
 
 

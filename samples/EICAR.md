@@ -21,8 +21,8 @@ caught).
    X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*
    ```
    Save as `samples/eicar.txt`.
-3. Verify the hash matches the known-bad entry in
-   `verdict-engine/known_bad_hashes.json`:
+3. Verify the hash matches the known-bad entry seeded by
+   `verdict-engine/migrations/0001_create_known_bad_hashes.sql`:
    ```
    275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f
    ```

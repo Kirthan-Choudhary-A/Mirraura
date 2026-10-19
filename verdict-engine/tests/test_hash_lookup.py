@@ -37,6 +37,13 @@ def pool():
     yield p
     with p.connection() as conn:
         conn.execute("DELETE FROM known_bad_hashes")
+        # Restore the EICAR baseline conftest seeded, so later test files
+        # (e.g. test_app.py) still see it regardless of run order.
+        conn.execute(
+            "INSERT INTO known_bad_hashes (hash, label, status, source, proposed_at, reviewed_at) "
+            "VALUES (%s, %s, 'approved', 'manual', now(), now()) ON CONFLICT (hash) DO NOTHING",
+            (EICAR_HASH, "EICAR-Test-File"),
+        )
         conn.commit()
     p.close()
 

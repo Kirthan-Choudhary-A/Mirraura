@@ -38,7 +38,11 @@ def _seed_known_bad_hashes():
     )
     with psycopg.connect(admin_url, autocommit=True) as conn:
         # Wipe leftovers from a previous run (test_app uses fixed hashes that would
-        # otherwise 409 on the second run), then seed EICAR.
+        # otherwise 409 on the second run), then seed EICAR. audit_log too:
+        # test_app.py assumes it starts empty, and only test_audit_log.py
+        # truncates it, so a run that skips that file would leave entries
+        # behind for the next run.
+        conn.execute("TRUNCATE audit_log RESTART IDENTITY")
         conn.execute("DELETE FROM known_bad_hashes")
         conn.execute(
             "INSERT INTO known_bad_hashes (hash, label, status, source, proposed_at, reviewed_at) "

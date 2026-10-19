@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -35,11 +36,15 @@ type createUserRequest struct {
 	Role     string `json:"role"`
 }
 
-func createUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
+func createUserHandler(pool *pgxpool.Pool, verdictEngineURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createUserRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.Username) == "" {
+			http.Error(w, "username is required", http.StatusBadRequest)
 			return
 		}
 		if req.Role != "admin" && req.Role != "analyst" {
@@ -63,6 +68,7 @@ func createUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			http.Error(w, "username already exists", http.StatusConflict)
 			return
 		}
+		auditUserAction(r, verdictEngineURL, "user_created", req.Username)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -75,7 +81,7 @@ func countAdmins(r *http.Request, pool *pgxpool.Pool) (int, error) {
 	return n, err
 }
 
-func deleteUserHandler(store *SessionStore, pool *pgxpool.Pool) http.HandlerFunc {
+func deleteUserHandler(store *SessionStore, pool *pgxpool.Pool, verdictEngineURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username := r.PathValue("username")
 		target, err := GetUser(r.Context(), pool, username)
@@ -101,6 +107,7 @@ func deleteUserHandler(store *SessionStore, pool *pgxpool.Pool) http.HandlerFunc
 		if err := store.DeleteByUsername(r.Context(), username); err != nil {
 			log.Printf("deleteUserHandler: failed to invalidate sessions for %s: %v", username, err)
 		}
+		auditUserAction(r, verdictEngineURL, "user_removed", username)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -109,7 +116,7 @@ type updateRoleRequest struct {
 	Role string `json:"role"`
 }
 
-func updateUserRoleHandler(store *SessionStore, pool *pgxpool.Pool) http.HandlerFunc {
+func updateUserRoleHandler(store *SessionStore, pool *pgxpool.Pool, verdictEngineURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username := r.PathValue("username")
 		var req updateRoleRequest
@@ -144,6 +151,18 @@ func updateUserRoleHandler(store *SessionStore, pool *pgxpool.Pool) http.Handler
 		if err := store.DeleteByUsername(r.Context(), username); err != nil {
 			log.Printf("updateUserRoleHandler: failed to invalidate sessions for %s: %v", username, err)
 		}
+		auditUserAction(r, verdictEngineURL, "user_role_changed", username)
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// auditUserAction records a user-management action in the audit log. The
+// audit schema has no "target user" field, so device_id carries the target
+// username. Called only after the action succeeded; a logging failure is
+// logged, not surfaced, since the action itself already happened.
+func auditUserAction(r *http.Request, verdictEngineURL, action, target string) {
+	actor, _ := sessionFromContext(r.Context())
+	if err := logAction(verdictEngineURL, action, target, actor.Username); err != nil {
+		log.Printf("%s: failed to audit-log action for %s: %v", action, target, err)
 	}
 }

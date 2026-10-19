@@ -74,7 +74,7 @@ CREATE INDEX ON audit_log (entry_hash);
 ```
 Entries stay heterogeneous (verdict records vs. action records have different fields) so `data` holds everything else exactly as stored today — `verify_chain_detail()`'s logic barely changes, just reads rows instead of file lines, ordered by `id`.
 
-**Tamper-evidence improvement:** `verdict_role` has no `UPDATE`/`DELETE` grant on `audit_log` at all, enforced by Postgres. Today a flat-file tamperer needs filesystem access; after this, even a fully compromised verdict-engine process cannot run the SQL to edit an old entry — a real security improvement over the current file, not just a storage swap.
+**Tamper-evidence improvement:** `verdict_role` has no `UPDATE`/`DELETE` grant on `audit_log` at all, enforced by Postgres. Today a flat-file tamperer needs filesystem access; after this, `verdict_role`'s own queries can never edit an old entry, even if the verdict engine's code is exploited through something like SQL injection — a real security improvement over the current file, not just a storage swap. This protects the runtime connection specifically: the migration-time admin credential (`VERDICT_MIGRATIONS_DATABASE_URL`) is also present in the same container's environment, so a fully compromised process could read it and connect as superuser directly, bypassing the grant. Isolating migrations into a one-shot step, so app containers never hold admin credentials, is a follow-up, not yet done.
 
 **Race protection:** each append wraps "get last hash, compute new hash, insert" in a transaction using a Postgres advisory lock, so this stays correct even if the verdict-engine ever runs more than one worker (today's code has no such protection, just doesn't need it yet with one process).
 

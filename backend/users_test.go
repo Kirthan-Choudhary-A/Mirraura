@@ -133,3 +133,30 @@ func TestSeedUsersMergesUsersJSON(t *testing.T) {
 		t.Fatalf("expected alice with role analyst, got %+v", alice)
 	}
 }
+
+func TestSeedUsersDoesNotResurrectRemovedUser(t *testing.T) {
+	pool := newTestUsersPool(t)
+	withEnv(t, "MIRRAURA_ADMIN_USER", "admin")
+	withEnv(t, "MIRRAURA_ADMIN_PASSWORD", "correcthorsebatterystaple")
+	withEnv(t, "MIRRAURA_USERS_PATH", "")
+	ctx := context.Background()
+
+	if err := SeedUsers(ctx, pool); err != nil {
+		t.Fatalf("first seed: %v", err)
+	}
+	// Realistic runtime flow: add a replacement admin, then remove the
+	// (e.g. compromised) bootstrap admin. The table is non-empty afterward.
+	hash, _ := bcrypt.GenerateFromPassword([]byte("replacementpw123"), bcrypt.DefaultCost)
+	if _, err := pool.Exec(ctx, "INSERT INTO users (username, password_hash, role) VALUES ('admin2', $1, 'admin')", string(hash)); err != nil {
+		t.Fatalf("add replacement admin: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM users WHERE username = 'admin'"); err != nil {
+		t.Fatalf("remove bootstrap admin: %v", err)
+	}
+	if err := SeedUsers(ctx, pool); err != nil {
+		t.Fatalf("second seed (restart): %v", err)
+	}
+	if _, err := GetUser(ctx, pool, "admin"); err == nil {
+		t.Fatal("expected the removed bootstrap admin to stay removed after re-seeding")
+	}
+}

@@ -25,7 +25,8 @@ breaks the chain and is detectable.
 | `verdict-engine/` | Python (FastAPI) | Known-bad hash lookup, weighted behavioral scoring, the audit log |
 | `sensor/` | Rust | Runs inside the shadow container, traces the sample with `strace`, emits canonical events |
 | `monitored-endpoint/` | Python | Poll-and-diff agent in the always-on container (processes, connections, `/etc`) |
-| `frontend/` | React + TypeScript | Dashboard: login, upload, live feed, verdict, audit log, hash approvals |
+| `frontend/` | React + TypeScript | Dashboard: login, upload, live feed, verdict, audit log, hash approvals, user management |
+| `postgres` | PostgreSQL 16 | Users, sessions, the audit log and known-bad hashes; each service connects with its own least-privilege role |
 
 nginx serves the dashboard and reverse-proxies `/api` to the backend, so
 everything is one origin and only the frontend port is published.
@@ -89,9 +90,15 @@ Two roles:
   reconnecting an isolated endpoint.
 - **analyst** — read-only plus uploads; approval and reconnect return 403.
 
-To add an analyst, generate a bcrypt hash and add it to `users.json` in the
-repo root (bind-mounted to `/app/users.json`), then set
-`MIRRAURA_USERS_PATH=/app/users.json`:
+The admin from `.env`, plus any entries in an optional `users.json`, are
+seeded only on first boot, when the `users` table is empty. After that,
+manage accounts from the dashboard's user management page (admins only);
+re-seeding never runs again, so a removed account stays removed across
+restarts.
+
+To pre-seed extra accounts on first boot, generate a bcrypt hash and add it
+to `users.json` in the repo root (bind-mounted to `/app/users.json`), then
+set `MIRRAURA_USERS_PATH=/app/users.json`:
 
 ```bash
 go run ./backend/cmd/hashpw 'their-password'
@@ -101,8 +108,9 @@ go run ./backend/cmd/hashpw 'their-password'
 [{ "username": "asha", "bcrypt_hash": "$2a$10$...", "role": "analyst" }]
 ```
 
-Sessions are a random token in an `HttpOnly` cookie, held in memory, and
-expire after 8 hours of inactivity — a backend restart signs everyone out.
+Sessions are a random token in an `HttpOnly` cookie, stored in Postgres,
+and expire after 8 hours of inactivity — they survive a backend restart.
+Removing a user or changing their role signs them out immediately.
 Failed logins are rate-limited per IP.
 
 ## Demo walkthrough
@@ -168,6 +176,9 @@ All routes require the session cookie except `/api/health` and
 | `POST` | `/api/monitor/reconnect` | Reconnect an isolated endpoint (admin) |
 | `GET`/`POST` | `/api/hashes` | List or propose known-bad hashes |
 | `POST` | `/api/hashes/{hash}/approve\|reject` | Decide a pending hash (admin) |
+| `GET`/`POST` | `/api/users` | List or create users (admin) |
+| `DELETE` | `/api/users/{username}` | Remove a user (admin) |
+| `PATCH` | `/api/users/{username}/role` | Change a user's role (admin) |
 
 ## Development
 
@@ -223,8 +234,9 @@ Deliberate, and worth knowing before you read too much into a verdict:
 - **The backend mounts the Docker socket.** Compromising the backend means
   compromising the host — this is a research tool, not something to expose
   to a network.
-- Storage is flat files (JSONL/JSON) with no rotation, and sessions are
-  in-memory.
+- Users, sessions, the audit log and known-bad hashes live in Postgres; the
+  raw event archive used for revalidation is still a JSONL file. Neither has
+  rotation or retention, so both grow without bound.
 
 ## Docs
 
