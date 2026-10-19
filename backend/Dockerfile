@@ -8,5 +8,6 @@ RUN go build -o backend .
 FROM alpine:3.19
 WORKDIR /app
 COPY --from=build /app/backend .
+COPY migrations/ ./migrations
 EXPOSE 8080
 CMD ["./backend"]

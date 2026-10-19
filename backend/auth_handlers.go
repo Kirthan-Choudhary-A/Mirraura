@@ -54,7 +54,7 @@ func requireAuth(store *SessionStore) func(http.Handler) http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			sess, ok := store.Get(cookie.Value)
+			sess, ok := store.Get(r.Context(), cookie.Value)
 			if !ok {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
@@ -114,7 +114,11 @@ func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimi
 			return
 		}
 
-		token := store.Create(user.Username, user.Role)
+		token, err := store.Create(r.Context(), user.Username, user.Role)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
 			Value:    token,
@@ -135,7 +139,7 @@ func logoutHandler(store *SessionStore) http.HandlerFunc {
 			return
 		}
 		if cookie, err := r.Cookie(sessionCookieName); err == nil {
-			store.Delete(cookie.Value)
+			store.Delete(r.Context(), cookie.Value)
 		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,

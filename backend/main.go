@@ -10,6 +10,21 @@ import (
 )
 
 func main() {
+	ctx := context.Background()
+
+	backendDBURL := os.Getenv("BACKEND_DATABASE_URL")
+	backendMigrationsURL := os.Getenv("BACKEND_MIGRATIONS_DATABASE_URL")
+	if backendDBURL == "" || backendMigrationsURL == "" {
+		log.Fatal("BACKEND_DATABASE_URL and BACKEND_MIGRATIONS_DATABASE_URL must both be set")
+	}
+	if err := RunMigrations(ctx, backendMigrationsURL, backendDBURL, "migrations"); err != nil {
+		log.Fatalf("RunMigrations: %v", err)
+	}
+	pool, err := NewPool(ctx, backendDBURL)
+	if err != nil {
+		log.Fatalf("NewPool: %v", err)
+	}
+
 	if len(os.Getenv("MIRRAURA_ADMIN_PASSWORD")) < 12 {
 		log.Fatal("MIRRAURA_ADMIN_PASSWORD must be set and at least 12 characters")
 	}
@@ -28,11 +43,11 @@ func main() {
 	}
 	hub := NewHub()
 	mon := NewMonitor(dm, verdictEngineURL, hub)
-	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	initCtx, initCancel := context.WithTimeout(ctx, 10*time.Second)
 	mon.InitIsolatedState(initCtx)
 	initCancel()
 
-	store := NewSessionStore()
+	store := NewSessionStore(pool)
 	limiter := NewLoginLimiter()
 	mux := newMux(dm, verdictEngineURL, hub, mon, store, users, limiter)
 
@@ -43,6 +58,18 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			if err := mon.Tick(ctx); err != nil {
 				log.Printf("monitor tick failed: %v", err)
+			}
+			cancel()
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := store.CleanupExpired(cleanupCtx); err != nil {
+				log.Printf("session cleanup failed: %v", err)
 			}
 			cancel()
 		}

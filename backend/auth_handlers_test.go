@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
@@ -11,8 +12,28 @@ import (
 	"testing"
 
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
+
+func testAuthPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	adminURL := testAdminURL(t)
+	runtimeURL := "postgres://auth_test_role:auth_test_pw@localhost:5432/mirraura"
+	ctx := context.Background()
+	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+	pool, err := NewPool(ctx, runtimeURL)
+	if err != nil {
+		t.Fatalf("NewPool(runtime): %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, "DELETE FROM sessions")
+		pool.Close()
+	})
+	return pool
+}
 
 func testUsers(t *testing.T) map[string]User {
 	t.Helper()
@@ -34,7 +55,7 @@ func testMux(t *testing.T) *http.ServeMux {
 	t.Helper()
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	return newMux(nil, "http://unused", hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	return newMux(nil, "http://unused", hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
 }
 
 func TestLoginSucceedsAndSetsCookie(t *testing.T) {
@@ -167,7 +188,7 @@ func TestAnalystGets403OnHashApprove(t *testing.T) {
 
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
-	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -191,7 +212,7 @@ func TestAdminCanApproveHash(t *testing.T) {
 
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
-	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -209,7 +230,7 @@ func TestAdminCanApproveHash(t *testing.T) {
 func TestWebSocketRejectedWithoutCookie(t *testing.T) {
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -230,7 +251,7 @@ func TestWebSocketRejectedWithoutCookie(t *testing.T) {
 func TestWebSocketAcceptedWithValidCookie(t *testing.T) {
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
