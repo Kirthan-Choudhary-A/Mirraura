@@ -18,6 +18,7 @@
 - Fail fast (don't start serving) if Postgres is unreachable or migrations fail at startup.
 - No new migration framework (golang-migrate/alembic) — plain `.sql` files + a small tracking table.
 - Tests run against a real test Postgres instance (connection string via env var), matching this project's existing convention of testing against real infrastructure.
+- Any test that calls `RunMigrations`/`run_migrations` against the real `migrations` directory (not a synthetic `t.TempDir()`/`tmp_path` one) must use the exact shared role/password every other such test in that service uses — `backend_role`/`backend_test_pw` for Go, `verdict_role`/`verdict_test_pw` for Python. `schema_migrations` tracks a migration as applied once globally, by filename, not per caller — a test using its own invented role name would silently never get that role bootstrapped once a sibling test wins the race to apply the migration first (discovered the hard way during Task 3; fixed in Tasks 3, 4, 6, 7's fixture code).
 
 ## Review Focus
 
@@ -36,7 +37,7 @@
 - Modify: `.env.example`
 
 **Interfaces:**
-- Produces: a reachable Postgres at `postgres:5432` inside the compose network, superuser `postgres`/`${POSTGRES_PASSWORD}`, database `mirraura`.
+- Produces: a reachable Postgres at `postgres:5432` inside the compose network (the hostname `backend`/`verdict-engine` use), AND at `localhost:${POSTGRES_PORT:-5432}` from the host machine — every later task's tests run via a bare `go test`/`pytest` on the host, not inside a container, so without the host port mapping none of them could ever reach it. Superuser `postgres`/`${POSTGRES_PASSWORD}`, database `mirraura`.
 
 - [ ] **Step 1: Add the postgres service**
 
@@ -49,6 +50,8 @@ Add to `docker-compose.yml`, alongside the existing services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=mirraura
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -89,7 +92,8 @@ Add these env vars to both `backend` and `verdict-engine` services' `environment
 Add to `.env.example`:
 
 ```
-# Postgres (all four data stores live here now)
+# Postgres (data stores are being migrated here across several tasks)
+POSTGRES_PORT=5432
 POSTGRES_PASSWORD=
 BACKEND_DB_PASSWORD=
 VERDICT_DB_PASSWORD=
@@ -383,7 +387,7 @@ import (
 func newTestSessionStore(t *testing.T) *SessionStore {
 	t.Helper()
 	adminURL := testAdminURL(t)
-	runtimeURL := "postgres://session_test_role:session_test_pw@localhost:5432/mirraura"
+	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
 	ctx := context.Background()
 	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
@@ -580,7 +584,7 @@ In `logoutHandler`, change `store.Delete(cookie.Value)` to `store.Delete(r.Conte
 func testAuthPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	adminURL := testAdminURL(t)
-	runtimeURL := "postgres://auth_test_role:auth_test_pw@localhost:5432/mirraura"
+	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
 	ctx := context.Background()
 	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
@@ -780,7 +784,7 @@ func withEnv(t *testing.T, key, value string) {
 func newTestUsersPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	adminURL := testAdminURL(t)
-	runtimeURL := "postgres://users_test_role:users_test_pw@localhost:5432/mirraura"
+	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
 	ctx := context.Background()
 	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
@@ -1026,7 +1030,7 @@ import (
 func newTestUsersPoolForHandlers(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	adminURL := testAdminURL(t)
-	runtimeURL := "postgres://user_handlers_test_role:user_handlers_test_pw@localhost:5432/mirraura"
+	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
 	ctx := context.Background()
 	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
@@ -1620,7 +1624,7 @@ def pool():
     admin_url = os.getenv("MIRRAURA_TEST_DATABASE_URL")
     if not admin_url:
         pytest.skip("MIRRAURA_TEST_DATABASE_URL not set; skipping Postgres-backed test")
-    runtime_url = "postgres://hash_lookup_test_role:hash_lookup_test_pw@localhost:5432/mirraura"
+    runtime_url = "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura"
     run_migrations(admin_url, runtime_url, "migrations")
     p = new_pool(runtime_url)
     propose_hash(p, EICAR_HASH, "EICAR-Test-File", source="manual")
@@ -1892,7 +1896,7 @@ def admin_url():
 
 @pytest.fixture
 def pool(admin_url):
-    runtime_url = "postgres://audit_log_test_role:audit_log_test_pw@localhost:5432/mirraura"
+    runtime_url = "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura"
     run_migrations(admin_url, runtime_url, "migrations")
     p = new_pool(runtime_url)
     yield p
