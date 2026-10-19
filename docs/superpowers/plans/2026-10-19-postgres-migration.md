@@ -331,18 +331,22 @@ git commit -m "feat: Postgres connection pool and migration runner"
 
 ---
 
-### Task 3: Go — sessions table and SessionStore rewrite
+### Task 3: Go — sessions table, SessionStore rewrite, and initial Postgres wiring in main.go
 
 **Files:**
 - Create: `backend/migrations/0001_create_sessions.sql`
 - Modify: `backend/session.go`
 - Modify: `backend/session_test.go`
 - Modify: `backend/auth_handlers.go` (call-site updates)
-- Modify: `backend/auth_handlers_test.go` (call-site updates, if it constructs a `SessionStore` directly)
+- Modify: `backend/auth_handlers_test.go` (its `NewSessionStore()` calls now need a pool)
+- Modify: `backend/main.go` (create the Postgres pool, run migrations, construct `NewSessionStore(pool)`, add the session-cleanup ticker — the rest of `main()`/`newMux` stays untouched until Task 4, since `loadUsers()`/`users`/`newMux`'s signature don't change here)
+- Modify: `backend/Dockerfile`
 
 **Interfaces:**
 - Consumes: `NewPool`, `RunMigrations` (Task 2).
 - Produces: `NewSessionStore(pool *pgxpool.Pool) *SessionStore`, `(*SessionStore).Create(ctx, username, role string) (string, error)`, `.Get(ctx, token string) (Session, bool)`, `.Delete(ctx, token string)`, `.CleanupExpired(ctx) error`.
+
+**Why main.go changes land here, not in a separate task:** `NewSessionStore()` takes no arguments today; once it requires a `*pgxpool.Pool`, every caller — including `main.go` and `auth_handlers_test.go` — needs one immediately, or the package stops compiling. Deferring that wiring to a later task would leave `go build`/`go test` broken for this task and the next, which breaks every other task's own test run too (Go compiles a whole package together; a broken `main.go` fails `go test ./backend/...` regardless of which test you target). `loadUsers()`/`users`/`newMux`'s signature are untouched here specifically so this task is the smallest compiling slice — Task 4 is the one that changes those, for the same compiling-slice reason.
 
 - [ ] **Step 1: Write the migration**
 
@@ -469,7 +473,7 @@ func TestSessionStoreGetRejectsExpiredSession(t *testing.T) {
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `MIRRAURA_TEST_DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@localhost:5432/mirraura" go test ./backend/... -run TestSessionStore -v`
+Run: `docker compose up -d postgres && MIRRAURA_TEST_DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@localhost:5432/mirraura" go test ./backend/... -run TestSessionStore -v`
 Expected: FAIL — `NewSessionStore` signature mismatch / `store.pool` undefined.
 
 - [ ] **Step 4: Rewrite `backend/session.go`**
@@ -568,32 +572,166 @@ to:
 
 In `logoutHandler`, change `store.Delete(cookie.Value)` to `store.Delete(r.Context(), cookie.Value)`.
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [ ] **Step 6: Update `backend/auth_handlers_test.go`'s `NewSessionStore()` calls**
 
-Run: same command as Step 3
-Expected: PASS
+`NewSessionStore` now requires a pool. Add this helper near the top of the file (after the existing imports) and use it everywhere `NewSessionStore()` was called bare:
 
-- [ ] **Step 7: Commit**
+```go
+func testAuthPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	adminURL := testAdminURL(t)
+	runtimeURL := "postgres://auth_test_role:auth_test_pw@localhost:5432/mirraura"
+	ctx := context.Background()
+	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+	pool, err := NewPool(ctx, runtimeURL)
+	if err != nil {
+		t.Fatalf("NewPool(runtime): %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, "DELETE FROM sessions")
+		pool.Close()
+	})
+	return pool
+}
+```
+
+Add `"context"` and `"github.com/jackc/pgx/v5/pgxpool"` to the file's import block (`"context"` may already be pulled in transitively by other test files in the package, but import it explicitly here since this file now uses it directly).
+
+In `testMux`, change:
+```go
+	return newMux(nil, "http://unused", hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+```
+to:
+```go
+	return newMux(nil, "http://unused", hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
+```
+
+Do the same replacement (`NewSessionStore()` → `NewSessionStore(testAuthPool(t))`) in the other four inline `newMux(...)` calls: `TestAnalystGets403OnHashApprove`, `TestAdminCanApproveHash`, `TestWebSocketRejectedWithoutCookie`, `TestWebSocketAcceptedWithValidCookie`. `newMux`'s own signature and the `users`/`testUsers(t)` argument are untouched in this task — only the `SessionStore` construction changes.
+
+- [ ] **Step 7: Wire the Postgres pool into `backend/main.go`**
+
+Replace the start of `main()`:
+```go
+func main() {
+	if len(os.Getenv("MIRRAURA_ADMIN_PASSWORD")) < 12 {
+		log.Fatal("MIRRAURA_ADMIN_PASSWORD must be set and at least 12 characters")
+	}
+	users, err := loadUsers()
+	if err != nil {
+		log.Fatalf("loadUsers: %v", err)
+	}
+```
+with:
+```go
+func main() {
+	ctx := context.Background()
+
+	backendDBURL := os.Getenv("BACKEND_DATABASE_URL")
+	backendMigrationsURL := os.Getenv("BACKEND_MIGRATIONS_DATABASE_URL")
+	if backendDBURL == "" || backendMigrationsURL == "" {
+		log.Fatal("BACKEND_DATABASE_URL and BACKEND_MIGRATIONS_DATABASE_URL must both be set")
+	}
+	if err := RunMigrations(ctx, backendMigrationsURL, backendDBURL, "migrations"); err != nil {
+		log.Fatalf("RunMigrations: %v", err)
+	}
+	pool, err := NewPool(ctx, backendDBURL)
+	if err != nil {
+		log.Fatalf("NewPool: %v", err)
+	}
+
+	if len(os.Getenv("MIRRAURA_ADMIN_PASSWORD")) < 12 {
+		log.Fatal("MIRRAURA_ADMIN_PASSWORD must be set and at least 12 characters")
+	}
+	users, err := loadUsers()
+	if err != nil {
+		log.Fatalf("loadUsers: %v", err)
+	}
+```
+(`loadUsers()`/`users` stay exactly as they are today — Task 4 replaces them. This step only adds the pool.)
+
+Change:
+```go
+	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+```
+to:
+```go
+	initCtx, initCancel := context.WithTimeout(ctx, 10*time.Second)
+```
+
+Change:
+```go
+	store := NewSessionStore()
+```
+to:
+```go
+	store := NewSessionStore(pool)
+```
+
+Add a second periodic-ticker goroutine right after the existing monitor-tick one (same function, just add this block after it, before the `port := os.Getenv("BACKEND_PORT")` line):
+```go
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := store.CleanupExpired(cleanupCtx); err != nil {
+				log.Printf("session cleanup failed: %v", err)
+			}
+			cancel()
+		}
+	}()
+```
+
+- [ ] **Step 8: Add migrations to the Docker image**
+
+In `backend/Dockerfile`'s final stage, add a line copying the migrations directory:
+
+```dockerfile
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=build /app/backend .
+COPY migrations/ ./migrations
+EXPOSE 8080
+CMD ["./backend"]
+```
+
+- [ ] **Step 9: Run tests to verify they pass**
+
+Run: same command as Step 3, plus the full package to confirm `main.go`/`auth_handlers_test.go` still compile: `MIRRAURA_TEST_DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@localhost:5432/mirraura" go test ./backend/... -v`
+Expected: PASS (this also runs the pre-existing `auth_handlers_test.go` suite against real Postgres now, instead of the old in-memory store).
+
+- [ ] **Step 10: Commit**
 
 ```bash
-git add backend/migrations/0001_create_sessions.sql backend/session.go backend/session_test.go backend/auth_handlers.go
+git add backend/migrations/0001_create_sessions.sql backend/session.go backend/session_test.go backend/auth_handlers.go backend/auth_handlers_test.go backend/main.go backend/Dockerfile
 git commit -m "feat: move session store to Postgres"
 ```
 
 ---
 
-### Task 4: Go — users table, DB-backed loading, and seed-once semantics
+### Task 4: Go — users table, runtime user management, and final main.go/newMux rewire
 
 **Files:**
 - Create: `backend/migrations/0002_create_users.sql`
+- Create: `backend/user_handlers.go`
+- Test: `backend/user_handlers_test.go`
 - Modify: `backend/users.go`
 - Modify: `backend/users_test.go`
+- Modify: `backend/auth_handlers.go` (login now uses `GetUser`, not a map)
+- Modify: `backend/auth_handlers_test.go` (final rewire: `newMux` stops taking a `users` map)
+- Modify: `backend/main.go` (final rewire: `SeedUsers` replaces `loadUsers`, `newMux`'s signature changes, new `/api/users*` routes)
 
 **Interfaces:**
-- Consumes: `NewPool`, `RunMigrations` (Task 2).
-- Produces: `SeedUsers(ctx context.Context, pool *pgxpool.Pool) error`, `GetUser(ctx, pool, username string) (User, error)`, `ListUsers(ctx, pool) ([]User, error)`.
+- Consumes: `NewPool`, `RunMigrations` (Task 2); `NewSessionStore` (Task 3).
+- Produces: `SeedUsers(ctx, pool) error`, `GetUser(ctx, pool, username) (User, error)`, `ListUsers(ctx, pool) ([]User, error)`, HTTP routes `GET /api/users`, `POST /api/users`, `DELETE /api/users/{username}`, `PATCH /api/users/{username}/role` (all admin-only).
 
-**Design note:** `users.json` and the admin env vars become a **one-time seed**, not a continuously-reloaded source — otherwise a restart would re-insert users a runtime admin action (Task 5) just removed. Seeding uses `INSERT ... ON CONFLICT (username) DO NOTHING`.
+**Design note:** `users.json` and the admin env vars become a **one-time seed**, not a continuously-reloaded source — otherwise a restart would re-insert users a runtime admin action just removed. Seeding uses `INSERT ... ON CONFLICT (username) DO NOTHING`.
+
+**Why this task absorbs what might look like three separate concerns (users table, runtime endpoints, main.go rewire):** removing the `users map[string]User` from `main()` (a direct consequence of moving users to Postgres) forces `newMux` and `loginHandler` to stop taking that map in the same change — there is no intermediate state where `main.go` has no `users` variable but `newMux`/`loginHandler` still expect one and the package still compiles. Splitting this across tasks would leave `go build`/`go test` broken between them, the same reasoning Task 3 used to justify absorbing its own main.go wiring.
+
+**Review Focus item owned here:** deleting or demoting the last remaining admin must be rejected.
 
 - [ ] **Step 1: Write the migration**
 
@@ -608,7 +746,7 @@ CREATE TABLE IF NOT EXISTS users (
 GRANT SELECT, INSERT, UPDATE, DELETE ON users TO {{ROLE_NAME}};
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [ ] **Step 2: Write the failing tests for `users.go`**
 
 Replace `backend/users_test.go` entirely with:
 
@@ -862,34 +1000,12 @@ func ListUsers(ctx context.Context, pool *pgxpool.Pool) ([]User, error) {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Run the users tests to verify they pass**
 
 Run: same command as Step 3
 Expected: PASS
 
-- [ ] **Step 6: Commit**
-
-```bash
-git add backend/migrations/0002_create_users.sql backend/users.go backend/users_test.go
-git commit -m "feat: move users to Postgres with one-time seed semantics"
-```
-
----
-
-### Task 5: Go — runtime user management endpoints
-
-**Files:**
-- Create: `backend/user_handlers.go`
-- Test: `backend/user_handlers_test.go`
-- Modify: `backend/auth_handlers.go` (login now uses `GetUser`, not a map)
-
-**Interfaces:**
-- Consumes: `GetUser`, `ListUsers` (Task 4); `requireAuth`, `requireRole` (existing).
-- Produces: HTTP routes `GET /api/users` (list), `POST /api/users` (create), `DELETE /api/users/{username}`, `PATCH /api/users/{username}/role` — all admin-only.
-
-**Review Focus item owned here:** deleting or demoting the last remaining admin must be rejected.
-
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 6: Write the failing tests for the runtime user-management endpoints**
 
 ```go
 // backend/user_handlers_test.go
@@ -980,12 +1096,12 @@ func TestUpdateUserRoleHandlerRejectsDemotingLastAdmin(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 7: Run tests to verify they fail**
 
 Run: `MIRRAURA_TEST_DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@localhost:5432/mirraura" go test ./backend/... -run "TestCreateUserHandler|TestDeleteUserHandlerRejectsLastAdmin|TestUpdateUserRoleHandlerRejectsDemotingLastAdmin" -v`
 Expected: FAIL — handlers not defined.
 
-- [ ] **Step 3: Implement `backend/user_handlers.go`**
+- [ ] **Step 8: Implement `backend/user_handlers.go`**
 
 ```go
 package main
@@ -1132,7 +1248,7 @@ func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
 }
 ```
 
-- [ ] **Step 4: Update `loginHandler` to use `GetUser` instead of a map**
+- [ ] **Step 9: Update `loginHandler` to use `GetUser` instead of a map**
 
 In `backend/auth_handlers.go`, change `loginHandler`'s signature from `func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimiter) http.HandlerFunc` to `func loginHandler(store *SessionStore, pool *pgxpool.Pool, limiter *LoginLimiter) http.HandlerFunc`, and replace:
 ```go
@@ -1153,105 +1269,27 @@ with:
 ```
 Add the `"github.com/jackc/pgx/v5/pgxpool"` import to `backend/auth_handlers.go`.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 10: Rewrite `main()` and `newMux` in `backend/main.go`**
 
-Run: same command as Step 2
-Expected: PASS
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add backend/user_handlers.go backend/user_handlers_test.go backend/auth_handlers.go
-git commit -m "feat: runtime user management endpoints, refuse removing the last admin"
-```
-
----
-
-### Task 6: Go — wire startup (main.go)
-
-**Files:**
-- Modify: `backend/main.go`
-- Modify: `backend/Dockerfile`
-
-**Interfaces:**
-- Consumes: `NewPool`, `RunMigrations` (Task 2), `NewSessionStore` (Task 3), `SeedUsers` (Task 4), the new handlers (Task 5).
-
-- [ ] **Step 1: Rewrite `main()` and `newMux`**
-
-In `backend/main.go`, replace the startup sequence:
-
+Replace the `users, err := loadUsers()` block (added in Task 3 Step 7) with `SeedUsers`:
 ```go
-func main() {
-	ctx := context.Background()
-
-	backendDBURL := os.Getenv("BACKEND_DATABASE_URL")
-	backendMigrationsURL := os.Getenv("BACKEND_MIGRATIONS_DATABASE_URL")
-	if backendDBURL == "" || backendMigrationsURL == "" {
-		log.Fatal("BACKEND_DATABASE_URL and BACKEND_MIGRATIONS_DATABASE_URL must both be set")
-	}
-	if err := RunMigrations(ctx, backendMigrationsURL, backendDBURL, "migrations"); err != nil {
-		log.Fatalf("RunMigrations: %v", err)
-	}
-	pool, err := NewPool(ctx, backendDBURL)
-	if err != nil {
-		log.Fatalf("NewPool: %v", err)
-	}
 	if err := SeedUsers(ctx, pool); err != nil {
 		log.Fatalf("SeedUsers: %v", err)
 	}
+```
+(delete the `if len(os.Getenv("MIRRAURA_ADMIN_PASSWORD")) < 12 { ... }` check and the `users, err := loadUsers() ...` block entirely — `SeedUsers` does the equivalent validation itself).
 
-	verdictEngineURL := os.Getenv("VERDICT_ENGINE_URL")
-	if verdictEngineURL == "" {
-		verdictEngineURL = "http://localhost:8000"
-	}
-	dm, err := NewDockerManager()
-	if err != nil {
-		log.Fatal(err)
-	}
-	hub := NewHub()
-	mon := NewMonitor(dm, verdictEngineURL, hub)
-	initCtx, initCancel := context.WithTimeout(ctx, 10*time.Second)
-	mon.InitIsolatedState(initCtx)
-	initCancel()
-
-	store := NewSessionStore(pool)
-	limiter := NewLoginLimiter()
+Change:
+```go
+	mux := newMux(dm, verdictEngineURL, hub, mon, store, users, limiter)
+```
+to:
+```go
 	mux := newMux(dm, verdictEngineURL, hub, mon, store, pool, limiter)
+```
 
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			tickCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			if err := mon.Tick(tickCtx); err != nil {
-				log.Printf("monitor tick failed: %v", err)
-			}
-			cancel()
-		}
-	}()
-
-	go func() {
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := store.CleanupExpired(cleanupCtx); err != nil {
-				log.Printf("session cleanup failed: %v", err)
-			}
-			cancel()
-		}
-	}()
-
-	port := os.Getenv("BACKEND_PORT")
-	if port == "" {
-		port = "8080"
-	}
-	log.Printf("backend listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatal(err)
-	}
-}
-
+Replace `newMux`'s signature and body entirely:
+```go
 func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, store *SessionStore, pool *pgxpool.Pool, limiter *LoginLimiter) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)
@@ -1293,39 +1331,79 @@ func dispatchByMethod(byMethod map[string]http.HandlerFunc) http.HandlerFunc {
 }
 ```
 
-Add `"github.com/jackc/pgx/v5/pgxpool"` to the import block.
+Add `"github.com/jackc/pgx/v5/pgxpool"` to `main.go`'s import block.
 
-- [ ] **Step 2: Add migrations to the Docker image**
+- [ ] **Step 11: Rewrite `backend/auth_handlers_test.go`'s user-seeding helper and every `newMux` call site**
 
-In `backend/Dockerfile`'s final stage, add a line copying the migrations directory:
+`newMux` no longer takes a `users` map, so `testUsers(t)` (which built that map) and every call site passing it need to change. Replace `testUsers(t)` entirely with a helper that seeds real rows into the pool `testAuthPool` (added in Task 3) already migrates:
 
-```dockerfile
-FROM alpine:3.19
-WORKDIR /app
-COPY --from=build /app/backend .
-COPY migrations/ ./migrations
-EXPOSE 8080
-CMD ["./backend"]
+```go
+func seedTestUsers(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	adminHash, err := bcrypt.GenerateFromPassword([]byte("adminpassword123"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword: %v", err)
+	}
+	analystHash, err := bcrypt.GenerateFromPassword([]byte("analystpassword123"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("GenerateFromPassword: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO users (username, password_hash, role) VALUES ('admin', $1, 'admin')", string(adminHash)); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO users (username, password_hash, role) VALUES ('analyst', $1, 'analyst')", string(analystHash)); err != nil {
+		t.Fatalf("seed analyst: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, "DELETE FROM users")
+	})
+}
 ```
 
-- [ ] **Step 3: Verify the full backend builds and its existing suite still passes**
+Change `testMux`:
+```go
+func testMux(t *testing.T) *http.ServeMux {
+	t.Helper()
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	hub := NewHub()
+	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
+	return newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
+}
+```
+
+In each of the four tests that build their own mux inline (`TestAnalystGets403OnHashApprove`, `TestAdminCanApproveHash`, `TestWebSocketRejectedWithoutCookie`, `TestWebSocketAcceptedWithValidCookie`), change (this is the Task-3-modified text — Task 3 Step 6 already changed the bare `NewSessionStore()` in these same four lines to `NewSessionStore(testAuthPool(t))`; this step is what finally removes `testUsers(t)`):
+```go
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(testAuthPool(t)), testUsers(t), NewLoginLimiter())
+```
+(or the `"http://unused"` variant) to:
+```go
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
+```
+(substituting `"http://unused"` for `fakeEngine.URL` in the two WebSocket tests, matching what each already passes today).
+
+- [ ] **Step 12: Run the full backend suite**
 
 Run: `cd backend && go build ./...`
 Expected: clean build.
 
-Run: `MIRRAURA_TEST_DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@localhost:5432/mirraura" go test ./...`
-Expected: all tests PASS (this will surface any other call site still using the old `SessionStore`/`loadUsers` signatures — fix forward, matching the pattern already used in Tasks 3-5).
+Run: `MIRRAURA_TEST_DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@localhost:5432/mirraura" go test ./... -v`
+Expected: all tests PASS. This is the first point every pre-existing backend test (not just this task's new ones) runs against the full Postgres-backed stack — surface and fix forward any other stale call site here.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 13: Commit**
 
 ```bash
-git add backend/main.go backend/Dockerfile
-git commit -m "feat: wire Postgres pool, migrations, and session cleanup into startup"
+git add backend/migrations/0002_create_users.sql backend/user_handlers.go backend/user_handlers_test.go backend/users.go backend/users_test.go backend/auth_handlers.go backend/auth_handlers_test.go backend/main.go
+git commit -m "feat: runtime user management, refuse removing the last admin, final Postgres rewire"
 ```
+
 
 ---
 
-### Task 7: Python — connection pool and migration runner
+### Task 5: Python — connection pool and migration runner
 
 **Files:**
 - Create: `verdict-engine/db.py`
@@ -1472,7 +1550,7 @@ git commit -m "feat: Postgres connection pool and migration runner (verdict-engi
 
 ---
 
-### Task 8: Python — known_bad_hashes table and hash_lookup rewrite
+### Task 6: Python — known_bad_hashes table and hash_lookup rewrite
 
 **Files:**
 - Create: `verdict-engine/migrations/0001_create_known_bad_hashes.sql`
@@ -1481,10 +1559,12 @@ git commit -m "feat: Postgres connection pool and migration runner (verdict-engi
 - Modify: `verdict-engine/tests/conftest.py` (remove the flat-file fixture for known-bad hashes; add a Postgres one)
 
 **Interfaces:**
-- Consumes: `new_pool`, `run_migrations` (Task 7).
+- Consumes: `new_pool`, `run_migrations` (Task 5).
 - Produces: `load_known_bad(pool) -> dict`, `check_hash(pool, sample_hash) -> str | None`, `list_hashes(pool) -> list[dict]`, `propose_hash(pool, sample_hash, label, source) -> dict`, `approve_hash(pool, sample_hash) -> dict`, `reject_hash(pool, sample_hash) -> dict`. Same signatures as today, each gaining a leading `pool` parameter.
 
 **Review Focus item owned here:** a second concurrent approve/reject on the same hash must not corrupt state.
+
+**Expected transient breakage:** `tests/test_app.py` imports `app.py` directly and will fail after this task, until Task 8 (wire app.py) lands -- `app.py` still calls the old pre-pool `hash_lookup` signatures until then. This task's own verification command (Step 3 above) is scoped to `tests/test_hash_lookup.py` specifically for this reason; don't treat a `tests/test_app.py` failure here as a regression this task introduced.
 
 - [ ] **Step 1: Write the migration**
 
@@ -1752,18 +1832,21 @@ git commit -m "feat: move known-bad hashes to Postgres with row-level locking"
 
 ---
 
-### Task 9: Python — audit_log table with restricted role, and AuditLog rewrite
+### Task 7: Python — audit_log table with restricted role, and AuditLog rewrite
 
 **Files:**
 - Create: `verdict-engine/migrations/0002_create_audit_log.sql`
 - Modify: `verdict-engine/audit_log.py`
 - Modify: `verdict-engine/tests/test_audit_log.py`
+- Modify: `verdict-engine/tests/conftest.py` (remove the flat-file fixture for the audit log — `AuditLog` no longer takes a `Path`, so `AUDIT_LOG_PATH` becomes unused here, same reasoning Task 6 applied to `KNOWN_BAD_HASHES_PATH`)
 
 **Interfaces:**
-- Consumes: `new_pool`, `run_migrations` (Task 7).
+- Consumes: `new_pool`, `run_migrations` (Task 5).
 - Produces: `AuditLog(pool)` (replaces `AuditLog(path)`), same method names (`append`, `all`, `get`, `verify_chain_detail`, `verify_chain`).
 
 **Review Focus items owned here:** `verdict_role` attempting `UPDATE`/`DELETE` on `audit_log` must fail with a Postgres permission error; the append-race protection (advisory lock) must actually prevent two concurrent appends from computing the same `prev_log_hash`.
+
+**Expected transient breakage:** same reasoning as Task 6 -- `tests/test_app.py` will still fail after this task (fixed by Task 8), since `app.py` hasn't been updated to construct `AuditLog(pool)` yet. This task's own verification (Step 3) is scoped to `tests/test_audit_log.py`.
 
 - [ ] **Step 1: Write the migration**
 
@@ -1963,27 +2046,31 @@ class AuditLog:
         return self.verify_chain_detail()["intact"]
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Remove the audit-log flat-file fixture from `conftest.py`**
+
+In `verdict-engine/tests/conftest.py`, remove the `_TEST_AUDIT_LOG`/`AUDIT_LOG_PATH` block (the two setup lines and the matching cleanup line in `pytest_sessionfinish`) — `AuditLog` no longer reads that env var.
+
+- [ ] **Step 6: Run tests to verify they pass**
 
 Run: same command as Step 3
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add verdict-engine/migrations/0002_create_audit_log.sql verdict-engine/audit_log.py verdict-engine/tests/test_audit_log.py
+git add verdict-engine/migrations/0002_create_audit_log.sql verdict-engine/audit_log.py verdict-engine/tests/test_audit_log.py verdict-engine/tests/conftest.py
 git commit -m "feat: move audit log to Postgres, restrict app role to insert+select"
 ```
 
 ---
 
-### Task 10: Python — wire startup (app.py)
+### Task 8: Python — wire startup (app.py)
 
 **Files:**
 - Modify: `verdict-engine/app.py`
 
 **Interfaces:**
-- Consumes: `new_pool`, `run_migrations` (Task 7), the new `pool`-taking signatures from Tasks 8-9.
+- Consumes: `new_pool`, `run_migrations` (Task 5), the new `pool`-taking signatures from Tasks 6-7.
 
 - [ ] **Step 1: Rewrite the module-level setup and every call site**
 
@@ -2028,7 +2115,7 @@ git commit -m "feat: wire Postgres pool and migrations into verdict-engine start
 
 ---
 
-### Task 11: Frontend — user management UI
+### Task 9: Frontend — user management UI
 
 **Files:**
 - Create: `frontend/src/components/UserManagement.tsx`
@@ -2303,7 +2390,7 @@ git commit -m "feat: admin-only user management UI"
 
 ---
 
-### Task 12: Docs
+### Task 10: Docs
 
 **Files:**
 - Modify: `docs/concepts.md`
