@@ -4,6 +4,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from db import run_migrations
+
 _TEST_EVENT_ARCHIVE = Path(__file__).parent / "test_event_archive.jsonl"
 _TEST_EVENT_ARCHIVE.unlink(missing_ok=True)
 os.environ["EVENT_ARCHIVE_PATH"] = str(_TEST_EVENT_ARCHIVE)
@@ -27,6 +29,13 @@ def _seed_known_bad_hashes():
     if not admin_url:
         yield
         return
+    # Run migrations here too so this fixture doesn't depend on test_app.py having
+    # been collected first. Absolute path so cwd doesn't matter.
+    run_migrations(
+        admin_url,
+        "postgres://verdict_role:verdict_test_pw@localhost:5432/mirraura",
+        Path(__file__).parent.parent / "migrations",
+    )
     with psycopg.connect(admin_url, autocommit=True) as conn:
         # Wipe leftovers from a previous run (test_app uses fixed hashes that would
         # otherwise 409 on the second run), then seed EICAR.
