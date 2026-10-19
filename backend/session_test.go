@@ -9,7 +9,12 @@ import (
 func newTestSessionStore(t *testing.T) *SessionStore {
 	t.Helper()
 	adminURL := testAdminURL(t)
-	runtimeURL := "postgres://session_test_role:session_test_pw@localhost:5432/mirraura"
+	// Every Go test that migrates the real "migrations" directory must share
+	// this exact role -- schema_migrations tracks a migration as applied
+	// globally, by filename, not per caller, so a different role name here
+	// would never actually get bootstrapped once another test file wins the
+	// race to apply 0001_create_sessions.sql first.
+	runtimeURL := "postgres://backend_role:backend_test_pw@localhost:5432/mirraura"
 	ctx := context.Background()
 	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
 		t.Fatalf("RunMigrations: %v", err)
