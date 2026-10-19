@@ -70,3 +70,13 @@ func (s *SessionStore) CleanupExpired(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
 	return err
 }
+
+// DeleteByUsername removes every session belonging to username. Call this
+// when an admin deletes a user or changes their role, so the change takes
+// effect immediately instead of waiting for the session to naturally expire
+// (sessions renew on every authenticated request, so without this a
+// deleted/demoted user could otherwise keep their old access indefinitely).
+func (s *SessionStore) DeleteByUsername(ctx context.Context, username string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE username = $1`, username)
+	return err
+}

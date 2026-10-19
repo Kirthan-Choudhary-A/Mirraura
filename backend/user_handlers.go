@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -74,7 +75,7 @@ func countAdmins(r *http.Request, pool *pgxpool.Pool) (int, error) {
 	return n, err
 }
 
-func deleteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
+func deleteUserHandler(store *SessionStore, pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username := r.PathValue("username")
 		target, err := GetUser(r.Context(), pool, username)
@@ -97,6 +98,9 @@ func deleteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
+		if err := store.DeleteByUsername(r.Context(), username); err != nil {
+			log.Printf("deleteUserHandler: failed to invalidate sessions for %s: %v", username, err)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -105,7 +109,7 @@ type updateRoleRequest struct {
 	Role string `json:"role"`
 }
 
-func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
+func updateUserRoleHandler(store *SessionStore, pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		username := r.PathValue("username")
 		var req updateRoleRequest
@@ -136,6 +140,9 @@ func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		if _, err := pool.Exec(r.Context(), `UPDATE users SET role = $1 WHERE username = $2`, req.Role, username); err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+		if err := store.DeleteByUsername(r.Context(), username); err != nil {
+			log.Printf("updateUserRoleHandler: failed to invalidate sessions for %s: %v", username, err)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}

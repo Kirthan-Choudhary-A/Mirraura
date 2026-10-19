@@ -103,10 +103,10 @@ func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, 
 		http.MethodPost: createUserHandler(pool),
 	}))))
 	mux.Handle("/api/users/{username}", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
-		http.MethodDelete: deleteUserHandler(pool),
+		http.MethodDelete: deleteUserHandler(store, pool),
 	}))))
 	mux.Handle("/api/users/{username}/role", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
-		http.MethodPatch: updateUserRoleHandler(pool),
+		http.MethodPatch: updateUserRoleHandler(store, pool),
 	}))))
 	return mux
 }
