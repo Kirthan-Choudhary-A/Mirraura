@@ -178,7 +178,7 @@ GRANT SELECT, INSERT ON db_test_table TO {{ROLE_NAME}};
 		t.Fatalf("NewPool: %v", err)
 	}
 	defer pool.Close()
-	defer pool.Exec(ctx, "DROP TABLE IF EXISTS db_test_table; DROP ROLE IF EXISTS db_test_role;")
+	defer pool.Exec(ctx, "DROP TABLE IF EXISTS db_test_table; DROP ROLE IF EXISTS db_test_role; DELETE FROM schema_migrations WHERE version = '0001_role.sql';")
 
 	var applied int
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations WHERE version = '0001_role.sql'").Scan(&applied); err != nil {
@@ -1460,7 +1460,7 @@ GRANT SELECT, INSERT ON db_test_table_py TO {{ROLE_NAME}};
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM schema_migrations WHERE version = %s", ("0001_role.sql",))
             assert cur.fetchone()[0] == 1
-            cur.execute("DROP TABLE IF EXISTS db_test_table_py; DROP ROLE IF EXISTS db_test_role_py;")
+            cur.execute("DROP TABLE IF EXISTS db_test_table_py; DROP ROLE IF EXISTS db_test_role_py; DELETE FROM schema_migrations WHERE version = '0001_role.sql';")
             conn.commit()
 
 
