@@ -6,13 +6,17 @@ container, watches what it actually does, and returns a verdict —
 `Normal`, `Suspicious`, `Compromised` or `Inconclusive` — with a confidence
 number and the exact list of behaviors that produced it.
 
-It runs two independent detection paths into the same verdict engine:
+It runs three independent detection paths into the same verdict engine:
 
 1. **Upload-triggered** — you upload a file, it detonates in a fresh
    container that is destroyed afterwards.
 2. **Continuous monitoring** — a persistent container stands in for "the
    real device" and is polled every 10 seconds. A `Compromised` verdict
    disconnects it from its network for real; only a human can reconnect it.
+3. **Automatic interception** — a background daemon on the host watches
+   your home directory and removable media; a new file is quarantined and
+   detonated automatically, with no upload step at all. See
+   [Automatic interception](#automatic-interception) below.
 
 Every verdict is appended to a hash-chained audit log, so an edited entry
 breaks the chain and is detectable.
@@ -25,8 +29,9 @@ breaks the chain and is detectable.
 | `verdict-engine/` | Python (FastAPI) | Known-bad hash lookup, weighted behavioral scoring, the audit log |
 | `sensor/` | Rust | Runs inside the shadow container, traces the sample with `strace`, emits canonical events |
 | `monitored-endpoint/` | Python | Poll-and-diff agent in the always-on container (processes, connections, `/etc`) |
-| `frontend/` | React + TypeScript | Dashboard: login, upload, live feed, verdict, audit log, hash approvals, user management |
-| `postgres` | PostgreSQL 16 | Users, sessions, the audit log and known-bad hashes; each service connects with its own least-privilege role |
+| `frontend/` | React + TypeScript | Dashboard: login, upload, live feed, verdict, audit log, hash approvals, quarantine review, user management |
+| `postgres` | PostgreSQL 16 | Users, sessions, the audit log, known-bad hashes, and quarantined-file records; each service connects with its own least-privilege role |
+| `interceptor/` | Go | Host-side daemon (not containerized): watches for new files, quarantines and submits them for automatic detonation |
 
 nginx serves the dashboard and reverse-proxies `/api` to the backend, so
 everything is one origin and only the frontend port is published.
@@ -158,6 +163,39 @@ A known-bad SHA-256 match short-circuits all of this to `Compromised` at
 confidence 1.0, but only for hashes a human has **approved** — auto-proposed
 hashes sit as `pending` and affect nothing until then.
 
+## Automatic interception
+
+`interceptor/` is a separate Go binary that runs directly on the host (Linux
+only), not inside Docker — it needs to see the host's real filesystem and
+mount events, which a container would only get through privileged
+bind-mounts. It watches your home directory and any removable media
+mounted under `/media`/`/mnt`; a new file is quarantined, detonated through
+the same pipeline as a manual upload, and then:
+
+- **Normal** → released back to where it was headed, automatically.
+- **Suspicious** / **Inconclusive** → held in quarantine and added to the
+  dashboard's **Quarantine** tab for an admin to approve or reject.
+- **Compromised** → stays quarantined permanently; a desktop notification
+  fires either way.
+
+Build and install:
+
+```bash
+cd interceptor
+GOOS=linux GOARCH=amd64 go build -o mirraura-interceptor .
+sudo cp mirraura-interceptor /usr/local/bin/
+sudo cp mirraura-interceptor.service /etc/systemd/system/
+# Edit the service file: set User=<your username> and a real INTERCEPTOR_TOKEN
+# (must match INTERCEPTOR_TOKEN in .env).
+sudo systemctl daemon-reload
+sudo systemctl enable --now mirraura-interceptor
+```
+
+It talks to the backend over the same origin the frontend uses
+(`BACKEND_URL`, e.g. `http://localhost:5173`), authenticated by
+`INTERCEPTOR_TOKEN` rather than a login session, since there's no human at
+the keyboard for it to log in as.
+
 ## API
 
 All routes require the session cookie except `/api/health` and
@@ -179,6 +217,10 @@ All routes require the session cookie except `/api/health` and
 | `GET`/`POST` | `/api/users` | List or create users (admin) |
 | `DELETE` | `/api/users/{username}` | Remove a user (admin) |
 | `PATCH` | `/api/users/{username}/role` | Change a user's role (admin) |
+| `POST` | `/api/intercept` | Submit a quarantined file for detonation (interceptor daemon, token auth, not session auth) |
+| `GET` | `/api/intercept/pending` | List quarantined files awaiting review (admin) |
+| `POST` | `/api/intercept/{id}/approve\|reject` | Decide a held quarantined file (admin) |
+| `GET` | `/api/intercept/{id}/status` | Poll a held file's decision (interceptor daemon, token auth) |
 
 ## Development
 
@@ -237,6 +279,24 @@ Deliberate, and worth knowing before you read too much into a verdict:
 - Users, sessions, the audit log and known-bad hashes live in Postgres; the
   raw event archive used for revalidation is still a JSONL file. Neither has
   rotation or retention, so both grow without bound.
+- **The interceptor only watches `$HOME` and removable media**, and
+  excludes dotdirs (`.cache`, `.config`, etc.) as app-internal noise — a
+  file dropped anywhere else on the filesystem is invisible to it.
+- **No static triage before detonation.** Every file pays the full
+  detonation cost (container boot + trace window); a fast pre-check (YARA
+  rules, fuzzy hashing) to catch obvious cases in milliseconds is a
+  deliberate future step, not built yet.
+- **Interception uses `inotify`/`fsnotify`, not `fanotify`.** A file exists
+  at its real path for a short window (moved into quarantine within
+  milliseconds of settling, not before it's ever written) rather than being
+  kernel-blocked from opening at all. `fanotify` with
+  `FAN_OPEN_PERM`/`FAN_EXEC_PERM` is the production-grade version of this —
+  closing that window by having the kernel itself pause the calling
+  process — and is the documented next step, not the current mechanism.
+- **The sensor still traces via `strace`/`ptrace`**, which real malware can
+  fingerprint (`PTRACE_TRACEME`, timing checks) and adds real per-syscall
+  overhead. An eBPF-based sensor (kernel tracepoints, no ptrace, no
+  per-syscall context switch) is a known, deliberately deferred upgrade.
 
 ## Docs
 

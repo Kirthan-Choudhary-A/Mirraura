@@ -1,0 +1,22 @@
+[Unit]
+Description=Mirraura automatic download interceptor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run as the desktop user whose $HOME gets watched, not root -- the
+# daemon only needs ordinary filesystem permissions in that account's own
+# home directory.
+# User=<your-username>
+Environment=HOME=%h
+Environment=BACKEND_URL=http://localhost:5173
+# Set the real shared secret below; it must match INTERCEPTOR_TOKEN in the
+# Docker Compose stack's .env.
+Environment=INTERCEPTOR_TOKEN=changeme
+ExecStart=/usr/local/bin/mirraura-interceptor
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

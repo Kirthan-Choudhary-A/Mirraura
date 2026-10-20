@@ -3,6 +3,10 @@ __pycache__/
 .venv/
 backend/backend
 backend/backend.exe
+interceptor/interceptor
+interceptor/interceptor.exe
+interceptor/mirraura-interceptor
+interceptor/mirraura-interceptor.exe
 node_modules/
 dist/
 .env

@@ -30,6 +30,8 @@ services:
       - MIRRAURA_ADMIN_PASSWORD=${MIRRAURA_ADMIN_PASSWORD}
       - MIRRAURA_USERS_PATH=${MIRRAURA_USERS_PATH:-}
       - BACKEND_DATABASE_URL=postgres://backend_role:${BACKEND_DB_PASSWORD}@postgres:5432/mirraura
+      - INTERCEPTOR_TOKEN=${INTERCEPTOR_TOKEN}
+      - SHADOW_RUNTIME=${SHADOW_RUNTIME:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./users.json:/app/users.json:ro
