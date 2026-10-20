@@ -129,6 +129,29 @@ export async function updateUserRole(username: string, role: "admin" | "analyst"
   });
 }
 
+export type QuarantineEntry = {
+  id: number;
+  sample_hash: string;
+  filename: string;
+  original_path: string;
+  verdict_label: string;
+  confidence: number;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+};
+
+export async function fetchQuarantinePending(): Promise<QuarantineEntry[]> {
+  return request("/api/intercept/pending");
+}
+
+export async function approveQuarantine(id: number): Promise<void> {
+  await request(`/api/intercept/${id}/approve`, { method: "POST" });
+}
+
+export async function rejectQuarantine(id: number): Promise<void> {
+  await request(`/api/intercept/${id}/reject`, { method: "POST" });
+}
+
 export type LiveMessage =
   | { type: "event"; source: "sample" | "monitor"; data: MirraEvent }
   | { type: "verdict"; source: "sample" | "monitor"; data: Verdict }

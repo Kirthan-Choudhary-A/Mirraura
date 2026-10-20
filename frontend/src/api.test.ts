@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { approveHash, fetchChainStatus, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
 import { createUser, deleteUser, fetchUsers, updateUserRole } from "./api";
+import { approveQuarantine, fetchQuarantinePending, rejectQuarantine } from "./api";
 import { applyLiveEvent, applyMonitorEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import { ApiError, request } from "./api";
 import { isValidSha256, sha256Hex } from "./api";
@@ -139,6 +140,34 @@ describe("user management", () => {
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/users/bob/role"),
       expect.objectContaining({ method: "PATCH" })
+    );
+  });
+
+  it("fetchQuarantinePending calls the intercept pending endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => [{ id: 1 }] });
+    const result = await fetchQuarantinePending();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/intercept/pending"),
+      expect.objectContaining({ credentials: "same-origin" })
+    );
+    expect(result).toEqual([{ id: 1 }]);
+  });
+
+  it("approveQuarantine posts to the quarantine-specific approve endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await approveQuarantine(42);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/intercept/42/approve"),
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("rejectQuarantine posts to the quarantine-specific reject endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await rejectQuarantine(42);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/intercept/42/reject"),
+      expect.objectContaining({ method: "POST" })
     );
   });
 });

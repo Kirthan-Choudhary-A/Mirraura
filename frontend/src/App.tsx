@@ -8,13 +8,14 @@ import {
   me,
   shouldUpdateSampleVerdict,
 } from "./api";
-import type { ChainStatus, ConnectionState, HashEntry } from "./api";
+import type { ChainStatus, ConnectionState, HashEntry, QuarantineEntry } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
 import { EventFeed } from "./components/EventFeed";
 import { Header } from "./components/Header";
 import { LoginPage } from "./components/LoginPage";
 import { MonitorBanner } from "./components/MonitorBanner";
 import { PendingHashApprovals } from "./components/PendingHashApprovals";
+import { QuarantineReview } from "./components/QuarantineReview";
 import { Skeleton } from "./components/Skeleton";
 import { StatStrip } from "./components/StatStrip";
 import { TabPanel, Tabs } from "./components/Tabs";
@@ -33,7 +34,7 @@ function App() {
   const [isolated, setIsolated] = useState(false);
   const [connState, setConnState] = useState<ConnectionState>("connecting");
   const [monitorError, setMonitorError] = useState<string | null>(null);
-  const [bottomTab, setBottomTab] = useState<"audit" | "hashes" | "users">("audit");
+  const [bottomTab, setBottomTab] = useState<"audit" | "hashes" | "quarantine" | "users">("audit");
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
 
   // StatStrip's source data — owned by AuditLogTable/PendingHashApprovals
@@ -42,6 +43,7 @@ function App() {
   // from exactly one place.
   const [verdicts, setVerdicts] = useState<Verdict[] | null>(null);
   const [hashes, setHashes] = useState<HashEntry[] | null>(null);
+  const [quarantine, setQuarantine] = useState<QuarantineEntry[] | null>(null);
   const [chainStatus, setChainStatus] = useState<ChainStatus | null>(null);
 
   useEffect(() => {
@@ -113,6 +115,7 @@ function App() {
 
   const role: "admin" | "analyst" = user.role === "admin" ? "admin" : "analyst";
   const pendingCount = hashes?.filter((h) => h.status === "pending").length ?? 0;
+  const quarantineCount = quarantine?.length ?? 0;
 
   return (
     <div className="app">
@@ -155,10 +158,15 @@ function App() {
               label: "Hash approvals",
               badge: pendingCount > 0 ? <span className="tabs__badge">{pendingCount}</span> : undefined,
             },
+            {
+              id: "quarantine",
+              label: "Quarantine",
+              badge: quarantineCount > 0 ? <span className="tabs__badge">{quarantineCount}</span> : undefined,
+            },
             ...(role === "admin" ? [{ id: "users", label: "Users" }] : []),
           ]}
           active={bottomTab}
-          onChange={(id) => setBottomTab(id as "audit" | "hashes" | "users")}
+          onChange={(id) => setBottomTab(id as "audit" | "hashes" | "quarantine" | "users")}
         />
         <TabPanel id="audit" active={bottomTab}>
           <AuditLogTable
@@ -175,6 +183,15 @@ function App() {
             onDecision={() => setRefreshKey((k) => k + 1)}
             onSessionExpired={handleSessionExpired}
             onHashesChange={setHashes}
+          />
+        </TabPanel>
+        <TabPanel id="quarantine" active={bottomTab}>
+          <QuarantineReview
+            refreshKey={refreshKey}
+            role={role}
+            onDecision={() => setRefreshKey((k) => k + 1)}
+            onSessionExpired={handleSessionExpired}
+            onQuarantineChange={setQuarantine}
           />
         </TabPanel>
         <TabPanel id="users" active={bottomTab}>
