@@ -66,7 +66,7 @@ func testMux(t *testing.T) *http.ServeMux {
 	seedTestUsers(t, pool)
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	return newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
+	return newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 }
 
 func TestLoginSucceedsAndSetsCookie(t *testing.T) {
@@ -201,7 +201,7 @@ func TestAnalystGets403OnHashApprove(t *testing.T) {
 	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
 	pool := testAuthPool(t)
 	seedTestUsers(t, pool)
-	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -227,7 +227,7 @@ func TestAdminCanApproveHash(t *testing.T) {
 	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
 	pool := testAuthPool(t)
 	seedTestUsers(t, pool)
-	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -247,7 +247,7 @@ func TestWebSocketRejectedWithoutCookie(t *testing.T) {
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
 	pool := testAuthPool(t)
 	seedTestUsers(t, pool)
-	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
+	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -270,7 +270,7 @@ func TestWebSocketAcceptedWithValidCookie(t *testing.T) {
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
 	pool := testAuthPool(t)
 	seedTestUsers(t, pool)
-	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter())
+	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 	server := httptest.NewServer(mux)
 	defer server.Close()
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -72,6 +73,28 @@ func requireRole(role string) func(http.Handler) http.Handler {
 			sess, ok := sessionFromContext(r.Context())
 			if !ok || sess.Role != role {
 				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// requireToken gates a route by a shared-secret bearer token instead of a
+// user session -- for the interceptor daemon, which runs headless on the
+// host with no logged-in human behind it. A compile-time-impossible empty
+// token always rejects, so a deployment that forgot to set
+// INTERCEPTOR_TOKEN fails closed rather than accepting any request.
+func requireToken(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if token == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			next.ServeHTTP(w, r)

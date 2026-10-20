@@ -61,7 +61,8 @@ func main() {
 
 	store := NewSessionStore(pool)
 	limiter := NewLoginLimiter()
-	mux := newMux(dm, verdictEngineURL, hub, mon, store, pool, limiter)
+	interceptorToken := os.Getenv("INTERCEPTOR_TOKEN")
+	mux := newMux(dm, verdictEngineURL, hub, mon, store, pool, limiter, interceptorToken)
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -97,7 +98,7 @@ func main() {
 	}
 }
 
-func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, store *SessionStore, pool *pgxpool.Pool, limiter *LoginLimiter) *http.ServeMux {
+func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, store *SessionStore, pool *pgxpool.Pool, limiter *LoginLimiter, interceptorToken string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)
 	mux.HandleFunc("/api/login", loginHandler(store, pool, limiter))
@@ -122,6 +123,11 @@ func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, 
 	mux.Handle("/api/users/{username}/role", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
 		http.MethodPatch: updateUserRoleHandler(store, pool, verdictEngineURL),
 	}))))
+	mux.Handle("/api/intercept", requireToken(interceptorToken)(interceptHandler(dm, verdictEngineURL, hub, pool)))
+	mux.Handle("/api/intercept/pending", requireAuth(store)(requireRole("admin")(quarantinePendingHandler(pool))))
+	mux.Handle("/api/intercept/{id}/approve", requireAuth(store)(requireRole("admin")(quarantineDecisionHandler(pool, verdictEngineURL, "approve"))))
+	mux.Handle("/api/intercept/{id}/reject", requireAuth(store)(requireRole("admin")(quarantineDecisionHandler(pool, verdictEngineURL, "reject"))))
+	mux.Handle("/api/intercept/{id}/status", requireToken(interceptorToken)(quarantineStatusHandler(pool)))
 	return mux
 }
 
