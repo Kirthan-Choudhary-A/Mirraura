@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -121,6 +122,22 @@ func TestRequireTokenAcceptsCorrectToken(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !called {
 		t.Fatalf("expected 200 and handler called, got %d called=%v", rec.Code, called)
+	}
+}
+
+// TestQuarantinePendingHandlerReturnsEmptyArrayNotNull guards against
+// encoding/json marshaling a nil slice as the JSON literal "null" -- the
+// frontend calls .length/.map() on this response unconditionally, which
+// throws on null the moment the queue is empty.
+func TestQuarantinePendingHandlerReturnsEmptyArrayNotNull(t *testing.T) {
+	pool := newTestQuarantinePool(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/intercept/pending", nil)
+	quarantinePendingHandler(pool)(rec, req)
+
+	if got := rec.Body.String(); strings.TrimSpace(got) != "[]" {
+		t.Fatalf("expected literal JSON [], got %q", got)
 	}
 }
 

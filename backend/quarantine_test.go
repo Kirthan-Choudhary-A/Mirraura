@@ -21,7 +21,9 @@ func newTestQuarantinePool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("NewPool(runtime): %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(ctx, "DELETE FROM quarantined_files")
+		if _, err := pool.Exec(ctx, "DELETE FROM quarantined_files"); err != nil {
+			t.Errorf("cleanup: DELETE FROM quarantined_files: %v", err)
+		}
 		pool.Close()
 	})
 	return pool

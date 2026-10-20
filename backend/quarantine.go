@@ -3,19 +3,20 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type QuarantinedFile struct {
-	ID           int64   `json:"id"`
-	SampleHash   string  `json:"sample_hash"`
-	Filename     string  `json:"filename"`
-	OriginalPath string  `json:"original_path"`
-	VerdictLabel string  `json:"verdict_label"`
-	Confidence   float64 `json:"confidence"`
-	Status       string  `json:"status"`
-	CreatedAt    string  `json:"created_at"`
+	ID           int64     `json:"id"`
+	SampleHash   string    `json:"sample_hash"`
+	Filename     string    `json:"filename"`
+	OriginalPath string    `json:"original_path"`
+	VerdictLabel string    `json:"verdict_label"`
+	Confidence   float64   `json:"confidence"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func insertQuarantine(ctx context.Context, pool *pgxpool.Pool, sampleHash, filename, originalPath, verdictLabel string, confidence float64) (int64, error) {
@@ -36,7 +37,10 @@ func listPendingQuarantine(ctx context.Context, pool *pgxpool.Pool) ([]Quarantin
 		return nil, err
 	}
 	defer rows.Close()
-	var out []QuarantinedFile
+	// Never nil: encoding/json marshals a nil slice as "null", which would
+	// break the frontend's .length/.map() calls the moment the queue is
+	// empty instead of giving it an empty array.
+	out := []QuarantinedFile{}
 	for rows.Next() {
 		var q QuarantinedFile
 		if err := rows.Scan(&q.ID, &q.SampleHash, &q.Filename, &q.OriginalPath, &q.VerdictLabel, &q.Confidence, &q.Status, &q.CreatedAt); err != nil {
