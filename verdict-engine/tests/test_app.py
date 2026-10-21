@@ -339,3 +339,42 @@ def test_corpus_decide_unknown_and_already_decided():
     content_hash = client.post("/corpus", json={"content_b64": _b64(os.urandom(32)), "label": "r"}).json()["content_hash"]
     assert client.post(f"/corpus/{content_hash}/reject", json={}).status_code == 200
     assert client.post(f"/corpus/{content_hash}/approve", json={}).status_code == 409
+
+
+def test_detection_method_known_bad_hash():
+    resp = client.post("/score", json={"sample_hash": EICAR_HASH, "events": []})
+    assert resp.json()["detection_method"] == "known_bad_hash"
+
+
+def test_detection_method_known_bad_hash_wins_over_static_matches():
+    resp = client.post(
+        "/score", json={"sample_hash": EICAR_HASH, "events": [], "static_matches": ["YARA rule 'EICAR_Test_String' matched"]}
+    )
+    assert resp.json()["detection_method"] == "known_bad_hash"
+
+
+def test_detection_method_static_triage():
+    resp = client.post(
+        "/score", json={"sample_hash": "e1" * 32, "events": [], "static_matches": ["YARA rule 'X' matched"]}
+    )
+    body = resp.json()
+    assert body["verdict"] == "Compromised"
+    assert body["detection_method"] == "static_triage"
+
+
+def test_detection_method_dynamic_when_timed_out():
+    resp = client.post("/score", json={"sample_hash": "e2" * 32, "events": [], "timed_out": True})
+    assert resp.json()["detection_method"] == "dynamic"
+
+
+def test_detection_method_dynamic_when_scored():
+    resp = client.post("/score", json={"sample_hash": "e3" * 32, "events": []})
+    assert resp.json()["detection_method"] == "dynamic"
+
+
+def test_detection_method_is_stored_in_audit_log():
+    verdict_id = client.post(
+        "/score", json={"sample_hash": "e4" * 32, "events": [], "static_matches": ["x"]}
+    ).json()["verdict_id"]
+    assert client.get(f"/verdicts/{verdict_id}").json()["detection_method"] == "static_triage"
+    assert client.get("/verify").json()["intact"] is True

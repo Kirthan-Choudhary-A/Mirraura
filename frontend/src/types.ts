@@ -35,4 +35,5 @@ export interface Verdict {
   causal_chain: string[];
   timestamp: string;
   prev_log_hash: string;
+  detection_method: string;
 }

@@ -114,20 +114,24 @@ def score(req: ScoreRequest):
     verdict_id = str(uuid.uuid4())
     known_bad_label = check_hash(_pool, req.sample_hash)
     if known_bad_label:
+        detection_method = "known_bad_hash"
         verdict, confidence, chain = (
             "Compromised",
             1.0,
             [f"sample hash matches known-bad entry '{known_bad_label}'"],
         )
     elif req.static_matches:
+        detection_method = "static_triage"
         verdict, confidence, chain = ("Compromised", 1.0, list(req.static_matches))
     elif req.timed_out:
+        detection_method = "dynamic"
         verdict, confidence, chain = (
             "Inconclusive",
             0.0,
             ["sample detonation aborted: sensor exceeded its execution timeout"],
         )
     else:
+        detection_method = "dynamic"
         confidence, chain = score_events(req.events)
         verdict = verdict_from_score(confidence, chain, had_telemetry=len(req.events) > 0)
         if verdict == "Compromised" and req.source == "sample":
@@ -153,6 +157,7 @@ def score(req: ScoreRequest):
         "verdict": verdict,
         "confidence": confidence,
         "causal_chain": chain,
+        "detection_method": detection_method,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     stored = audit_log.append(record)
