@@ -142,6 +142,8 @@ No public sign-up — this is a security tool, not a public service. Exactly one
 
 **Pydantic (verdict engine, Python)** — FastAPI's typed-model layer; this is *where* the canonical event/verdict schema actually lives in code (`verdict-engine/schemas.py`) — one source of truth that both validates requests and serializes responses.
 
+**yara-python (static triage, verdict engine)** — The standard Python binding for YARA, the industry-standard pattern-matching engine antivirus/EDR tools use for signature detection. Lets a sample be flagged from its raw bytes (`verdict-engine/yara_triage.py`, rules in `yara-rules/*.yar`) before ever running it in the shadow container — a decisive match skips detonation entirely. Chosen over hand-rolled string search because expressing "match any of these patterns, weighted/combined by this condition" is exactly YARA's job, and it has prebuilt wheels for this project's Python version (no new system library to install in the Docker image).
+
 **pytest (Python testing, `verdict-engine/`)** — The standard Python test runner; used with plain `assert` statements and, for the audit log, `tmp_path`/`conftest.py` fixtures so tests never touch real state on disk.
 
 **gorilla/websocket (Go)** — The standard, well-known Go WebSocket library (Go's standard library doesn't include WebSocket support) — used for the live event feed to the dashboard.
