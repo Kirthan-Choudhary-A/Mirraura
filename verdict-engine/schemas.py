@@ -43,3 +43,7 @@ class Verdict(BaseModel):
     causal_chain: List[str]
     timestamp: str
     prev_log_hash: str
+    # How the verdict was reached: "known_bad_hash", "static_triage", or
+    # "dynamic" (detonated & scored). Defaults to "dynamic" for audit
+    # entries written before this field existed.
+    detection_method: str = "dynamic"

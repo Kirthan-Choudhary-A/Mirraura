@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, HelpCircle, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FlaskConical, Fingerprint, HelpCircle, ShieldAlert, Zap } from "lucide-react";
 import type { Verdict } from "../types";
 import { Badge } from "./Badge";
 import type { BadgeTone } from "./Badge";
@@ -20,6 +20,14 @@ const ICON: Record<Verdict["verdict"], typeof CheckCircle2> = {
   Inconclusive: HelpCircle,
 };
 
+// How the verdict was reached. Unknown values render nothing rather than a
+// guessed label.
+const METHOD: Record<string, { label: string; icon: typeof CheckCircle2 }> = {
+  known_bad_hash: { label: "known-bad match", icon: Fingerprint },
+  static_triage: { label: "instant static match (not detonated)", icon: Zap },
+  dynamic: { label: "detonated & scored", icon: FlaskConical },
+};
+
 export function VerdictPanel({ verdict }: { verdict: Verdict | null }) {
   if (!verdict) {
     return (
@@ -32,13 +40,22 @@ export function VerdictPanel({ verdict }: { verdict: Verdict | null }) {
   const tone = TONE[verdict.verdict];
   const Icon = ICON[verdict.verdict];
   const confidencePct = Math.round(verdict.confidence * 100);
+  const method = METHOD[verdict.detection_method];
 
   return (
     <Card title="Verdict">
       <div key={verdict.verdict_id} className="verdict-result" data-tone={tone}>
-        <Badge tone={tone} icon={<Icon size={16} />}>
-          {verdict.verdict}
-        </Badge>
+        <div className="verdict-headline">
+          <Badge tone={tone} icon={<Icon size={16} />}>
+            {verdict.verdict}
+          </Badge>
+          {method && (
+            <span className="verdict-method" data-method={verdict.detection_method}>
+              <method.icon size={12} aria-hidden="true" />
+              {method.label}
+            </span>
+          )}
+        </div>
 
         <div className="verdict-confidence">
           <div className="verdict-confidence__bar">

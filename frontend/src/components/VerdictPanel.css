@@ -4,6 +4,35 @@
   gap: var(--sp-3);
 }
 
+.verdict-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.verdict-method {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--sp-2);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--fs-1);
+  line-height: 1.4;
+}
+
+/* The two non-detonation paths get the accent color: they're the "caught
+   without running it" cases the badge exists to call out. */
+.verdict-method[data-method="static_triage"],
+.verdict-method[data-method="known_bad_hash"] {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
 .verdict-confidence {
   display: flex;
   align-items: center;
