@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -76,6 +77,21 @@ func detonateAndScore(reqCtx context.Context, dm *DockerManager, verdictEngineUR
 	sum := sha256.Sum256(data)
 	sampleHash := hex.EncodeToString(sum[:])
 
+	staticMatches, err := staticTriage(verdictEngineURL, data)
+	if err != nil {
+		// Fails open to detonation, not open to a verdict: a triage-call
+		// failure (network blip, verdict-engine briefly down) must never
+		// skip scoring entirely, only skip the "detonation" optimization.
+		log.Printf("static triage failed, falling back to detonation: %v", err)
+	} else if len(staticMatches) > 0 {
+		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, filename, source, actor, false, []json.RawMessage{}, staticMatches)
+		if err != nil {
+			return nil, fmt.Errorf("scoring failed: %w", err)
+		}
+		hub.Broadcast(map[string]any{"type": "verdict", "source": source, "data": verdict})
+		return verdict, nil
+	}
+
 	tmpPath := filepath.Join(os.TempDir(), filename)
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return nil, fmt.Errorf("failed to stage upload: %w", err)
@@ -122,7 +138,7 @@ func detonateAndScore(reqCtx context.Context, dm *DockerManager, verdictEngineUR
 	}
 	timedOut := sensorCtx.Err() != nil
 
-	verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, filename, source, actor, timedOut, events)
+	verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, filename, source, actor, timedOut, events, nil)
 	if err != nil {
 		return nil, fmt.Errorf("scoring failed: %w", err)
 	}
@@ -130,7 +146,36 @@ func detonateAndScore(reqCtx context.Context, dm *DockerManager, verdictEngineUR
 	return verdict, nil
 }
 
-func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor string, timedOut bool, events []json.RawMessage) (*Verdict, error) {
+// staticTriage posts data to the verdict engine's /triage endpoint and
+// returns the (possibly empty) list of static match reasons, without
+// touching Docker. Called before detonation so a decisive match can skip
+// it entirely.
+func staticTriage(baseURL string, data []byte) ([]string, error) {
+	body, err := json.Marshal(map[string]any{
+		"sample_content_b64": base64.StdEncoding.EncodeToString(data),
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := httpClient.Post(baseURL+"/triage", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("verdict-engine returned %d: %s", resp.StatusCode, string(b))
+	}
+	var out struct {
+		Matches []string `json:"matches"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Matches, nil
+}
+
+func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor string, timedOut bool, events []json.RawMessage, staticMatches []string) (*Verdict, error) {
 	body, err := json.Marshal(map[string]any{
 		"sample_hash":     sampleHash,
 		"sample_filename": sampleFilename,
@@ -138,6 +183,7 @@ func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor s
 		"events":          events,
 		"source":          source,
 		"actor":           actor,
+		"static_matches":  staticMatches,
 	})
 	if err != nil {
 		return nil, err

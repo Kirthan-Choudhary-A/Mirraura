@@ -5,8 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
+import base64
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+
+import static_triage
 
 from audit_log import AuditLog
 from db import new_pool
@@ -47,6 +51,18 @@ class ScoreRequest(BaseModel):
     # auto-propose); "monitor" = continuous-monitoring event batch (the hash is of
     # a JSON event array, would never match a future upload).
     source: str = "sample"
+    # Populated by the caller from a prior /triage call. Non-empty short-
+    # circuits straight to Compromised, same as a known-bad hash match --
+    # set when the caller already ran static triage instead of detonating.
+    static_matches: List[str] = []
+
+
+class TriageRequest(BaseModel):
+    sample_content_b64: str
+
+
+class TriageResponse(BaseModel):
+    matches: List[str]
 
 
 class ActionRequest(BaseModel):
@@ -73,6 +89,12 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/triage", response_model=TriageResponse)
+def triage(req: TriageRequest):
+    data = base64.b64decode(req.sample_content_b64)
+    return TriageResponse(matches=static_triage.run(data))
+
+
 @app.post("/score", response_model=Verdict)
 def score(req: ScoreRequest):
     verdict_id = str(uuid.uuid4())
@@ -83,6 +105,8 @@ def score(req: ScoreRequest):
             1.0,
             [f"sample hash matches known-bad entry '{known_bad_label}'"],
         )
+    elif req.static_matches:
+        verdict, confidence, chain = ("Compromised", 1.0, list(req.static_matches))
     elif req.timed_out:
         verdict, confidence, chain = (
             "Inconclusive",
