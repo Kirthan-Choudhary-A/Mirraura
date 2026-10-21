@@ -42,6 +42,7 @@ func pollHeldEntries(cfg Config) {
 		}
 		switch status {
 		case "approved":
+			markReleased(meta.OriginalPath)
 			if err := moveFile(payloadPath(entryDir), meta.OriginalPath); err != nil {
 				log.Printf("held poller: release %s: %v", meta.Filename, err)
 				continue

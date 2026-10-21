@@ -68,6 +68,7 @@ func submitAndAct(cfg Config, entryDir string, meta QuarantineMeta) {
 
 	switch result.Decision {
 	case "release":
+		markReleased(meta.OriginalPath)
 		if err := moveFile(payloadPath(entryDir), meta.OriginalPath); err != nil {
 			log.Printf("release %s: %v", meta.Filename, err)
 			return

@@ -70,6 +70,9 @@ func handleEvent(w *fsnotify.Watcher, event fsnotify.Event, quarantineDir string
 		return
 	}
 	if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+		if isJustReleased(event.Name) {
+			return
+		}
 		stab.touch(event.Name)
 	}
 }
