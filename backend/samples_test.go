@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -75,6 +77,30 @@ func TestScoreWithVerdictEngineSendsActor(t *testing.T) {
 	}
 	if gotBody["actor"] != "alice" {
 		t.Fatalf("expected actor=alice in request body, got %v", gotBody["actor"])
+	}
+}
+
+// TestScoreWithVerdictEngineSendsEmptyArrayNotNullStaticMatches guards
+// against a nil Go slice marshaling to the JSON literal null, which
+// verdict-engine's static_matches: List[str] field rejects with a 422 --
+// this exact bug shipped once already and was caught live via a real
+// dashboard upload, not a unit test.
+func TestScoreWithVerdictEngineSendsEmptyArrayNotNullStaticMatches(t *testing.T) {
+	var gotBody map[string]any
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"static_matches":null`) {
+			t.Errorf("static_matches must never serialize as null, got: %s", body)
+		}
+		json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Verdict{VerdictID: "v1", Verdict: "Normal"})
+	}))
+	defer fakeEngine.Close()
+
+	_, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", "", false, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

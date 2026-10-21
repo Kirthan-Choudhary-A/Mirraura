@@ -176,6 +176,13 @@ func staticTriage(baseURL string, data []byte) ([]string, error) {
 }
 
 func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor string, timedOut bool, events []json.RawMessage, staticMatches []string) (*Verdict, error) {
+	// A nil Go slice marshals to JSON null, which Pydantic's
+	// static_matches: List[str] rejects outright (422) -- every caller
+	// that has nothing to report passes nil here, so normalize it rather
+	// than pushing a []string{} literal onto every call site.
+	if staticMatches == nil {
+		staticMatches = []string{}
+	}
 	body, err := json.Marshal(map[string]any{
 		"sample_hash":     sampleHash,
 		"sample_filename": sampleFilename,
