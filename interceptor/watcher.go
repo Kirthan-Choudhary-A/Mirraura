@@ -66,7 +66,7 @@ func handleEvent(w *fsnotify.Watcher, event fsnotify.Event, quarantineDir string
 		}
 		return
 	}
-	if shouldSkipDir(filepath.Dir(event.Name), quarantineDir) {
+	if shouldSkipDir(filepath.Dir(event.Name), quarantineDir) || shouldSkipFile(event.Name) {
 		return
 	}
 	if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {

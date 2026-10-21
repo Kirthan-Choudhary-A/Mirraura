@@ -15,3 +15,11 @@ func shouldSkipDir(dir, quarantineDir string) bool {
 	base := filepath.Base(dir)
 	return len(base) > 0 && base[0] == '.'
 }
+
+// shouldSkipFile reports whether a regular file should never be quarantined:
+// dotfiles (.zsh_history, .bash_history, .viminfo, ...) are app/shell-
+// internal state that churns on every command, not downloaded content.
+func shouldSkipFile(path string) bool {
+	base := filepath.Base(path)
+	return len(base) > 0 && base[0] == '.'
+}

@@ -114,6 +114,9 @@ func sweepDirectory(root, quarantineDir string, jobs chan<- string) {
 			}
 			return nil
 		}
+		if shouldSkipFile(path) {
+			return nil
+		}
 		jobs <- path
 		return nil
 	})
