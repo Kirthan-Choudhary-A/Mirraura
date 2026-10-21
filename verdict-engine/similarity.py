@@ -1,23 +1,19 @@
 from difflib import SequenceMatcher
-from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 _THRESHOLD = 0.85
 
 
-def compare(data: bytes, corpus_dir: Path) -> List[Dict]:
-    """Returns [{"label": str, "ratio": float}, ...] for every corpus entry
-    scoring >= 0.85, most similar first. An entry's label is its filename
-    stem, so corpus files are named for what they are."""
+def compare(data: bytes, corpus: List[Tuple[str, bytes]]) -> List[Dict]:
+    """Returns [{"label": str, "ratio": float}, ...] for every (label, content)
+    corpus entry scoring >= 0.85 against data, most similar first."""
     text = data.decode(errors="replace")
-    # ponytail: re-reads the corpus on every call and SequenceMatcher is
-    # O(n*m) -- fine for a handful of small scripts, cache/cap sizes if the
-    # corpus grows.
+    # ponytail: SequenceMatcher is O(n*m) per entry -- fine for a small corpus
+    # of capped-size scripts (see corpus_lookup.MAX_SAMPLE_BYTES), cache
+    # decoded entries or prefilter if the corpus grows.
     matches = []
-    for p in sorted(corpus_dir.iterdir()):
-        if not p.is_file():
-            continue
-        ratio = SequenceMatcher(None, text, p.read_bytes().decode(errors="replace")).ratio()
+    for label, content in corpus:
+        ratio = SequenceMatcher(None, text, content.decode(errors="replace")).ratio()
         if ratio >= _THRESHOLD:
-            matches.append({"label": p.stem, "ratio": ratio})
+            matches.append({"label": label, "ratio": ratio})
     return sorted(matches, key=lambda m: m["ratio"], reverse=True)

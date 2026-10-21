@@ -113,6 +113,8 @@ func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, 
 	mux.Handle("/api/monitor/reconnect", requireAuth(store)(requireRole("admin")(monitorReconnectHandler(mon))))
 	mux.Handle("/api/hashes", requireAuth(store)(hashesHandler(verdictEngineURL)))
 	mux.Handle("/api/hashes/", requireAuth(store)(requireRole("admin")(hashDecisionHandler(verdictEngineURL))))
+	mux.Handle("/api/corpus", requireAuth(store)(corpusHandler(verdictEngineURL)))
+	mux.Handle("/api/corpus/", requireAuth(store)(requireRole("admin")(corpusDecisionHandler(verdictEngineURL))))
 	mux.Handle("/api/users", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
 		http.MethodGet:  listUsersHandler(pool),
 		http.MethodPost: createUserHandler(pool, verdictEngineURL),

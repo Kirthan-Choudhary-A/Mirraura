@@ -214,6 +214,8 @@ All routes require the session cookie except `/api/health` and
 | `POST` | `/api/monitor/reconnect` | Reconnect an isolated endpoint (admin) |
 | `GET`/`POST` | `/api/hashes` | List or propose known-bad hashes |
 | `POST` | `/api/hashes/{hash}/approve\|reject` | Decide a pending hash (admin) |
+| `GET`/`POST` | `/api/corpus` | List or propose known-bad samples for similarity matching |
+| `POST` | `/api/corpus/{content_hash}/approve\|reject` | Decide a pending corpus sample (admin) |
 | `GET`/`POST` | `/api/users` | List or create users (admin) |
 | `DELETE` | `/api/users/{username}` | Remove a user (admin) |
 | `PATCH` | `/api/users/{username}/role` | Change a user's role (admin) |

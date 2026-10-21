@@ -1,3 +1,6 @@
+import base64
+import os
+
 from fastapi.testclient import TestClient
 
 from app import app
@@ -288,3 +291,51 @@ def test_verify_route_returns_chain_status():
     assert resp.status_code == 200
     body = resp.json()
     assert "intact" in body and "entries" in body and "broken_at" in body
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+def test_triage_matches_seeded_corpus():
+    data = b"#!/bin/bash\nexec 3<>/dev/tcp/127.0.0.1/31337 2>/dev/null || true\n"
+    resp = client.post("/triage", json={"sample_content_b64": _b64(data)})
+    assert resp.status_code == 200
+    assert any("devtcp_reverse_shell" in m for m in resp.json()["matches"])
+
+
+def test_corpus_submit_approve_then_triage_matches():
+    content = f"corpus-route-test:{os.urandom(32).hex()}".encode()
+    resp = client.post("/corpus", json={"content_b64": _b64(content), "label": "route-test"})
+    assert resp.status_code == 200
+    content_hash = resp.json()["content_hash"]
+
+    assert client.post("/triage", json={"sample_content_b64": _b64(content)}).json()["matches"] == []
+    pending = [s for s in client.get("/corpus").json() if s["content_hash"] == content_hash]
+    assert pending[0]["status"] == "pending"
+
+    approve = client.post(f"/corpus/{content_hash}/approve", json={"actor": "alice"})
+    assert approve.status_code == 200
+    matches = client.post("/triage", json={"sample_content_b64": _b64(content)}).json()["matches"]
+    assert any("route-test" in m for m in matches)
+
+    logged = [r for r in client.get("/verdicts").json() if r.get("action") == "corpus_sample_approved"]
+    assert logged[-1]["hash"] == content_hash and logged[-1]["actor"] == "alice"
+
+
+def test_corpus_submit_rejects_bad_input():
+    assert client.post("/corpus", json={"content_b64": "not base64!!", "label": "x"}).status_code == 400
+    assert client.post("/corpus", json={"content_b64": "", "label": "x"}).status_code == 400
+
+
+def test_corpus_submit_duplicate_conflicts():
+    body = {"content_b64": _b64(os.urandom(32)), "label": "dup"}
+    client.post("/corpus", json=body)
+    assert client.post("/corpus", json=body).status_code == 409
+
+
+def test_corpus_decide_unknown_and_already_decided():
+    assert client.post(f"/corpus/{'0' * 64}/reject", json={}).status_code == 404
+    content_hash = client.post("/corpus", json={"content_b64": _b64(os.urandom(32)), "label": "r"}).json()["content_hash"]
+    assert client.post(f"/corpus/{content_hash}/reject", json={}).status_code == 200
+    assert client.post(f"/corpus/{content_hash}/approve", json={}).status_code == 409

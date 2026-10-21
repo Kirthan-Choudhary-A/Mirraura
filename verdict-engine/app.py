@@ -13,6 +13,15 @@ from pydantic import BaseModel
 import static_triage
 
 from audit_log import AuditLog
+from corpus_lookup import (
+    SampleExistsError,
+    SampleNotFoundError,
+    SampleNotPendingError,
+    approve_sample,
+    list_samples,
+    propose_sample,
+    reject_sample,
+)
 from db import new_pool
 from event_archive import EventArchive
 from hash_lookup import (
@@ -80,6 +89,11 @@ class HashDecisionRequest(BaseModel):
     actor: str = ""
 
 
+class CorpusSubmitRequest(BaseModel):
+    content_b64: str
+    label: str
+
+
 def _strip_entry_hash(record: dict) -> dict:
     return {k: v for k, v in record.items() if k != "entry_hash"}
 
@@ -92,7 +106,7 @@ def health():
 @app.post("/triage", response_model=TriageResponse)
 def triage(req: TriageRequest):
     data = base64.b64decode(req.sample_content_b64)
-    return TriageResponse(matches=static_triage.run(data))
+    return TriageResponse(matches=static_triage.run(data, _pool))
 
 
 @app.post("/score", response_model=Verdict)
@@ -245,6 +259,67 @@ def reject_hash_route(hash: str, req: HashDecisionRequest):
             "record_id": str(uuid.uuid4()),
             "action": "hash_rejected",
             "hash": entry["hash"],
+            "label": entry["label"],
+            "actor": req.actor,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    return entry
+
+
+@app.get("/corpus")
+def list_corpus_route():
+    return list_samples(_pool)
+
+
+@app.post("/corpus")
+def submit_corpus_route(req: CorpusSubmitRequest):
+    try:
+        content = base64.b64decode(req.content_b64, validate=True)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="content_b64 must be valid base64")
+    try:
+        return propose_sample(_pool, content, req.label, source="manual")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except SampleExistsError:
+        raise HTTPException(status_code=409, detail="sample already exists")
+
+
+@app.post("/corpus/{content_hash}/approve")
+def approve_corpus_route(content_hash: str, req: HashDecisionRequest):
+    try:
+        entry = approve_sample(_pool, content_hash)
+    except SampleNotFoundError:
+        raise HTTPException(status_code=404, detail="sample not found")
+    except SampleNotPendingError:
+        raise HTTPException(status_code=409, detail="sample is not pending")
+    audit_log.append(
+        {
+            "record_id": str(uuid.uuid4()),
+            "action": "corpus_sample_approved",
+            "hash": entry["content_hash"],
+            "label": entry["label"],
+            "actor": req.actor,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    return entry
+
+
+@app.post("/corpus/{content_hash}/reject")
+def reject_corpus_route(content_hash: str, req: HashDecisionRequest):
+    try:
+        entry = reject_sample(_pool, content_hash)
+    except SampleNotFoundError:
+        raise HTTPException(status_code=404, detail="sample not found")
+    except SampleNotPendingError:
+        raise HTTPException(status_code=409, detail="sample is not pending")
+    audit_log.append(
+        {
+            "record_id": str(uuid.uuid4()),
+            "action": "corpus_sample_rejected",
+            "hash": entry["content_hash"],
             "label": entry["label"],
             "actor": req.actor,
             "timestamp": datetime.now(timezone.utc).isoformat(),

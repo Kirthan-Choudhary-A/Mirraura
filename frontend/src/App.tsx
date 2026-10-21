@@ -8,12 +8,13 @@ import {
   me,
   shouldUpdateSampleVerdict,
 } from "./api";
-import type { ChainStatus, ConnectionState, HashEntry, QuarantineEntry } from "./api";
+import type { ChainStatus, ConnectionState, CorpusEntry, HashEntry, QuarantineEntry } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
 import { EventFeed } from "./components/EventFeed";
 import { Header } from "./components/Header";
 import { LoginPage } from "./components/LoginPage";
 import { MonitorBanner } from "./components/MonitorBanner";
+import { CorpusReview } from "./components/CorpusReview";
 import { PendingHashApprovals } from "./components/PendingHashApprovals";
 import { QuarantineReview } from "./components/QuarantineReview";
 import { Skeleton } from "./components/Skeleton";
@@ -34,7 +35,7 @@ function App() {
   const [isolated, setIsolated] = useState(false);
   const [connState, setConnState] = useState<ConnectionState>("connecting");
   const [monitorError, setMonitorError] = useState<string | null>(null);
-  const [bottomTab, setBottomTab] = useState<"audit" | "hashes" | "quarantine" | "users">("audit");
+  const [bottomTab, setBottomTab] = useState<"audit" | "hashes" | "corpus" | "quarantine" | "users">("audit");
   const [liveAnnouncement, setLiveAnnouncement] = useState("");
 
   // StatStrip's source data — owned by AuditLogTable/PendingHashApprovals
@@ -44,6 +45,7 @@ function App() {
   const [verdicts, setVerdicts] = useState<Verdict[] | null>(null);
   const [hashes, setHashes] = useState<HashEntry[] | null>(null);
   const [quarantine, setQuarantine] = useState<QuarantineEntry[] | null>(null);
+  const [corpus, setCorpus] = useState<CorpusEntry[] | null>(null);
   const [chainStatus, setChainStatus] = useState<ChainStatus | null>(null);
 
   useEffect(() => {
@@ -116,6 +118,7 @@ function App() {
   const role: "admin" | "analyst" = user.role === "admin" ? "admin" : "analyst";
   const pendingCount = hashes?.filter((h) => h.status === "pending").length ?? 0;
   const quarantineCount = quarantine?.length ?? 0;
+  const corpusCount = corpus?.length ?? 0;
 
   return (
     <div className="app">
@@ -159,6 +162,11 @@ function App() {
               badge: pendingCount > 0 ? <span className="tabs__badge">{pendingCount}</span> : undefined,
             },
             {
+              id: "corpus",
+              label: "Corpus",
+              badge: corpusCount > 0 ? <span className="tabs__badge">{corpusCount}</span> : undefined,
+            },
+            {
               id: "quarantine",
               label: "Quarantine",
               badge: quarantineCount > 0 ? <span className="tabs__badge">{quarantineCount}</span> : undefined,
@@ -166,7 +174,7 @@ function App() {
             ...(role === "admin" ? [{ id: "users", label: "Users" }] : []),
           ]}
           active={bottomTab}
-          onChange={(id) => setBottomTab(id as "audit" | "hashes" | "quarantine" | "users")}
+          onChange={(id) => setBottomTab(id as "audit" | "hashes" | "corpus" | "quarantine" | "users")}
         />
         <TabPanel id="audit" active={bottomTab}>
           <AuditLogTable
@@ -183,6 +191,15 @@ function App() {
             onDecision={() => setRefreshKey((k) => k + 1)}
             onSessionExpired={handleSessionExpired}
             onHashesChange={setHashes}
+          />
+        </TabPanel>
+        <TabPanel id="corpus" active={bottomTab}>
+          <CorpusReview
+            refreshKey={refreshKey}
+            role={role}
+            onDecision={() => setRefreshKey((k) => k + 1)}
+            onSessionExpired={handleSessionExpired}
+            onCorpusChange={setCorpus}
           />
         </TabPanel>
         <TabPanel id="quarantine" active={bottomTab}>

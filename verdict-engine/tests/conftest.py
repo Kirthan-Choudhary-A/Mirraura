@@ -1,3 +1,4 @@
+import hashlib
 import os
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -46,6 +47,14 @@ if _test_admin_url:
     )
 
 
+# Mirrors migrations/0003's seed rows -- the approved similarity corpus a
+# fresh install starts with.
+SEED_CORPUS = [
+    ("sensitive_write", b"#!/bin/bash\ntouch /etc/mirraura-test-marker\ncat /etc/hostname > /dev/null\n"),
+    ("devtcp_reverse_shell", b"#!/bin/bash\nexec 3<>/dev/tcp/127.0.0.1/31337 2>/dev/null || true\n"),
+]
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _seed_known_bad_hashes():
     admin_url = os.environ.get("MIRRAURA_TEST_DATABASE_URL")
@@ -64,6 +73,11 @@ def _seed_known_bad_hashes():
             "INSERT INTO known_bad_hashes (hash, label, status, source, proposed_at, reviewed_at) "
             "VALUES (%s, %s, 'approved', 'manual', now(), now()) ON CONFLICT (hash) DO NOTHING",
             ("275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f", "EICAR-Test-File"),
+        )
+        # Same for the similarity corpus: back to just the migration's seeds.
+        conn.execute(
+            "DELETE FROM known_bad_samples WHERE NOT (content_hash = ANY(%s))",
+            ([hashlib.sha256(c).hexdigest() for _, c in SEED_CORPUS],),
         )
     yield
 
