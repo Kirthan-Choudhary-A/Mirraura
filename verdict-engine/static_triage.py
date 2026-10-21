@@ -1,15 +1,14 @@
 import logging
-from pathlib import Path
 from typing import List
 
+import corpus_lookup
 import yara_triage
 import similarity
 
 logger = logging.getLogger(__name__)
-_CORPUS_DIR = Path(__file__).parent / "known_bad_samples"
 
 
-def run(data: bytes) -> List[str]:
+def run(data: bytes, pool) -> List[str]:
     """Runs both static checks and returns a flat list of human-readable
     match descriptions, empty if neither found anything. A scan failure is
     logged and treated as no match, never appended here -- this list drives
@@ -24,7 +23,7 @@ def run(data: bytes) -> List[str]:
         logger.warning("YARA scan failed, treating as no match", exc_info=True)
 
     try:
-        for m in similarity.compare(data, _CORPUS_DIR):
+        for m in similarity.compare(data, corpus_lookup.load_known_bad(pool)):
             reasons.append(f"{m['ratio']:.0%} similar to known-bad sample '{m['label']}'")
     except Exception:
         logger.warning("similarity scan failed, treating as no match", exc_info=True)

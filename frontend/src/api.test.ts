@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { approveHash, fetchChainStatus, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
 import { createUser, deleteUser, fetchUsers, updateUserRole } from "./api";
 import { approveQuarantine, fetchQuarantinePending, rejectQuarantine } from "./api";
+import { approveCorpusEntry, fetchCorpusPending, rejectCorpusEntry, submitCorpusSample } from "./api";
 import { applyLiveEvent, applyMonitorEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import { ApiError, request } from "./api";
 import { isValidSha256, sha256Hex } from "./api";
@@ -308,5 +309,42 @@ describe("sha256Hex", () => {
     const file = new File(["hello"], "hello.txt");
     const hash = await sha256Hex(file);
     expect(hash).toBe("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+  });
+});
+
+describe("corpus", () => {
+  it("fetchCorpusPending returns only pending entries", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { content_hash: "a", status: "pending" },
+        { content_hash: "b", status: "approved" },
+      ],
+    });
+    const result = await fetchCorpusPending();
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/corpus"), expect.anything());
+    expect(result.map((e) => e.content_hash)).toEqual(["a"]);
+  });
+
+  it("submitCorpusSample posts the file base64-encoded with its label", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await submitCorpusSample(new File([new Uint8Array([0, 255, 104, 105])], "s.sh"), "lbl");
+    const [, init] = (fetch as any).mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ content_b64: "AP9oaQ==", label: "lbl" });
+  });
+
+  it("approve and reject post to the content-hash-specific endpoints", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await approveCorpusEntry("abc123");
+    await rejectCorpusEntry("abc123");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/corpus/abc123/approve"),
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/corpus/abc123/reject"),
+      expect.objectContaining({ method: "POST" })
+    );
   });
 });

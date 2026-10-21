@@ -103,6 +103,44 @@ export async function rejectHash(hash: string): Promise<void> {
   await request(`/api/hashes/${hash}/reject`, { method: "POST" });
 }
 
+export type CorpusEntry = {
+  content_hash: string;
+  label: string;
+  status: "pending" | "approved" | "rejected";
+  source: "auto" | "manual";
+  proposed_at: string;
+  reviewed_at: string | null;
+  size: number;
+  preview: string;
+};
+
+/** Matches the verdict engine's corpus_lookup.MAX_SAMPLE_BYTES. */
+export const MAX_CORPUS_SAMPLE_BYTES = 64 * 1024;
+
+export async function fetchCorpusPending(): Promise<CorpusEntry[]> {
+  const entries = await request<CorpusEntry[]>("/api/corpus");
+  return entries.filter((e) => e.status === "pending");
+}
+
+export async function submitCorpusSample(file: File, label: string): Promise<void> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  await request("/api/corpus", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content_b64: btoa(binary), label }),
+  });
+}
+
+export async function approveCorpusEntry(contentHash: string): Promise<void> {
+  await request(`/api/corpus/${contentHash}/approve`, { method: "POST" });
+}
+
+export async function rejectCorpusEntry(contentHash: string): Promise<void> {
+  await request(`/api/corpus/${contentHash}/reject`, { method: "POST" });
+}
+
 export type UserEntry = { username: string; role: "admin" | "analyst" };
 
 export async function fetchUsers(): Promise<UserEntry[]> {

@@ -216,6 +216,32 @@ func TestAnalystGets403OnHashApprove(t *testing.T) {
 	}
 }
 
+func TestAnalystGets403OnCorpusApprove(t *testing.T) {
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"hash":"abc","status":"approved"}`))
+	}))
+	defer fakeEngine.Close()
+
+	hub := NewHub()
+	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, _ := login(t, server, "analyst", "analystpassword123")
+	resp, err := client.Post(server.URL+"/api/corpus/abc/approve", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for an analyst approving a corpus sample, got %d", resp.StatusCode)
+	}
+}
+
 func TestAdminCanApproveHash(t *testing.T) {
 	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
