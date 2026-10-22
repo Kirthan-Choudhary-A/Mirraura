@@ -24,3 +24,5 @@ sensor/target/
 .worktrees/
 .superpowers/
 users.json
+.claude/
+CLAUDE.md
