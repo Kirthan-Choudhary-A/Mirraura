@@ -42,7 +42,7 @@ func main() {
 		log.Fatalf("create watcher: %v", err)
 	}
 	defer w.Close()
-	if err := watchRecursively(w, cfg.Home, cfg.QuarantineDir); err != nil {
+	if err := watchRecursively(w, cfg.Home, cfg.ExactExcludes); err != nil {
 		log.Fatalf("initial watch of %s: %v", cfg.Home, err)
 	}
 
@@ -55,7 +55,7 @@ func main() {
 
 	go pollRemovableMedia(cfg, jobs)
 
-	runWatchLoop(w, cfg.QuarantineDir, stab)
+	runWatchLoop(w, cfg.ExactExcludes, stab)
 }
 
 func resubmitPendingEntries(cfg Config) {
@@ -94,7 +94,7 @@ func pollRemovableMedia(cfg Config, jobs chan<- string) {
 		}
 		for _, mount := range newMounts(known, current) {
 			log.Printf("removable media mounted: %s -- sweeping", mount)
-			sweepDirectory(mount, cfg.QuarantineDir, jobs)
+			sweepDirectory(mount, cfg.ExactExcludes, jobs)
 		}
 		known = current
 	}
@@ -103,13 +103,13 @@ func pollRemovableMedia(cfg Config, jobs chan<- string) {
 // sweepDirectory walks root and enqueues every regular file found,
 // skipping excluded directories. Used both for a freshly mounted drive and
 // could be reused for any future "scan this whole tree now" need.
-func sweepDirectory(root, quarantineDir string, jobs chan<- string) {
+func sweepDirectory(root string, exactExcludes []string, jobs chan<- string) {
 	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if path != root && shouldSkipDir(path, quarantineDir) {
+			if path != root && shouldSkipDir(path, exactExcludes) {
 				return filepath.SkipDir
 			}
 			return nil

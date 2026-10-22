@@ -22,12 +22,13 @@ func TestWatcherDetectsNewFile(t *testing.T) {
 		t.Fatalf("NewWatcher: %v", err)
 	}
 	defer w.Close()
-	if err := watchRecursively(w, home, quarantineDir); err != nil {
+	excludes := []string{quarantineDir}
+	if err := watchRecursively(w, home, excludes); err != nil {
 		t.Fatalf("watchRecursively: %v", err)
 	}
 
 	stab := newStabilizer(50 * time.Millisecond)
-	go runWatchLoop(w, quarantineDir, stab)
+	go runWatchLoop(w, excludes, stab)
 
 	target := filepath.Join(home, "Downloads", "payload.sh")
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
@@ -64,12 +65,13 @@ func TestWatcherIgnoresDotDir(t *testing.T) {
 		t.Fatalf("NewWatcher: %v", err)
 	}
 	defer w.Close()
-	if err := watchRecursively(w, home, quarantineDir); err != nil {
+	excludes := []string{quarantineDir}
+	if err := watchRecursively(w, home, excludes); err != nil {
 		t.Fatalf("watchRecursively: %v", err)
 	}
 
 	stab := newStabilizer(50 * time.Millisecond)
-	go runWatchLoop(w, quarantineDir, stab)
+	go runWatchLoop(w, excludes, stab)
 
 	target := filepath.Join(home, ".cache", "something")
 	if err := os.WriteFile(target, []byte("noise"), 0644); err != nil {
