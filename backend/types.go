@@ -29,6 +29,8 @@ type Verdict struct {
 	// Passed through from the verdict engine so the dashboard can show how
 	// the verdict was reached (known_bad_hash, static_triage, dynamic).
 	DetectionMethod string `json:"detection_method"`
+	// "sample" (upload/intercept) or "monitor" (continuous-monitoring batch).
+	Source string `json:"source"`
 }
 
 type Broadcaster interface {

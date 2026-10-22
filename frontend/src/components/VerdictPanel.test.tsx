@@ -13,6 +13,7 @@ const base: Verdict = {
   timestamp: "2026-10-22T00:00:00Z",
   prev_log_hash: "0".repeat(64),
   detection_method: "dynamic",
+  source: "sample",
 };
 
 describe("VerdictPanel detection method badge", () => {

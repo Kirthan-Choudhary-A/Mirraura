@@ -47,3 +47,9 @@ class Verdict(BaseModel):
     # "dynamic" (detonated & scored). Defaults to "dynamic" for audit
     # entries written before this field existed.
     detection_method: str = "dynamic"
+    # "sample" (upload/intercept) or "monitor" (continuous-monitoring
+    # batch) -- was previously only written to event_archive.py's
+    # training-data file, never the queryable audit log itself. Defaults
+    # to "sample" for audit entries written before this field existed,
+    # since uploads vastly outnumbered monitor batches historically.
+    source: str = "sample"

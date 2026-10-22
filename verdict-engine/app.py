@@ -158,6 +158,7 @@ def score(req: ScoreRequest):
         "confidence": confidence,
         "causal_chain": chain,
         "detection_method": detection_method,
+        "source": req.source,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     stored = audit_log.append(record)

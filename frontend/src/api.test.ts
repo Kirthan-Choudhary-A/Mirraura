@@ -244,6 +244,7 @@ describe("shouldUpdateSampleVerdict", () => {
     timestamp: "2026-09-18T00:00:00Z",
     prev_log_hash: "0".repeat(64),
     detection_method: "dynamic",
+    source: "sample",
   };
 
   it("is true for a sample-source verdict", () => {

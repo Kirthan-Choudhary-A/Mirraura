@@ -378,3 +378,20 @@ def test_detection_method_is_stored_in_audit_log():
     ).json()["verdict_id"]
     assert client.get(f"/verdicts/{verdict_id}").json()["detection_method"] == "static_triage"
     assert client.get("/verify").json()["intact"] is True
+
+
+def test_score_defaults_source_to_sample():
+    resp = client.post("/score", json={"sample_hash": "e5" * 32, "events": []})
+    assert resp.json()["source"] == "sample"
+
+
+def test_score_persists_monitor_source():
+    resp = client.post("/score", json={"sample_hash": "e6" * 32, "events": [], "source": "monitor"})
+    assert resp.json()["source"] == "monitor"
+
+
+def test_source_is_stored_in_audit_log():
+    verdict_id = client.post(
+        "/score", json={"sample_hash": "e7" * 32, "events": [], "source": "monitor"}
+    ).json()["verdict_id"]
+    assert client.get(f"/verdicts/{verdict_id}").json()["source"] == "monitor"

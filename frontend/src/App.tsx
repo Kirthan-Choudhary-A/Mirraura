@@ -10,6 +10,7 @@ import {
 } from "./api";
 import type { ChainStatus, ConnectionState, CorpusEntry, HashEntry, QuarantineEntry } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
+import { DetectionsOverview } from "./components/DetectionsOverview";
 import { EventFeed } from "./components/EventFeed";
 import { Header } from "./components/Header";
 import { LoginPage } from "./components/LoginPage";
@@ -131,7 +132,10 @@ function App() {
       {monitorError && <p className="error-text">{monitorError}</p>}
 
       {verdicts && hashes ? (
-        <StatStrip verdicts={verdicts} hashes={hashes} chainIntact={chainStatus?.intact ?? null} />
+        <>
+          <StatStrip verdicts={verdicts} hashes={hashes} chainIntact={chainStatus?.intact ?? null} />
+          <DetectionsOverview verdicts={verdicts} />
+        </>
       ) : (
         <Skeleton rows={1} />
       )}

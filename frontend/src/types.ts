@@ -36,4 +36,5 @@ export interface Verdict {
   timestamp: string;
   prev_log_hash: string;
   detection_method: string;
+  source: string;
 }
