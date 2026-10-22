@@ -268,8 +268,9 @@ Deliberate, and worth knowing before you read too much into a verdict:
   invisible, and anything outside the four rules scores as `Normal`.
 - **Evadable by design at this scale.** A sample that sleeps past the 15s
   trace window, or fingerprints the container first, comes back clean.
-- **Exact-hash matching only.** No YARA, fuzzy hashing or threat-intel
-  lookup; one changed byte defeats the known-bad list.
+- **Known-bad matching is hash-exact plus YARA + text-similarity triage**,
+  not true fuzzy hashing (ssdeep/TLSH) or a threat-intel lookup — far less
+  coverage than a commercial AV's signature corpus.
 - **Monitoring is a 10s snapshot diff.** Anything that starts and exits
   between polls is missed, and the poller excludes its own toolchain by
   name.
@@ -284,10 +285,13 @@ Deliberate, and worth knowing before you read too much into a verdict:
 - **The interceptor only watches `$HOME` and removable media**, and
   excludes dotdirs (`.cache`, `.config`, etc.) as app-internal noise — a
   file dropped anywhere else on the filesystem is invisible to it.
-- **No static triage before detonation.** Every file pays the full
-  detonation cost (container boot + trace window); a fast pre-check (YARA
-  rules, fuzzy hashing) to catch obvious cases in milliseconds is a
-  deliberate future step, not built yet.
+- **gVisor is wired but not enabled.** `SHADOW_RUNTIME=runsc` is supported
+  end-to-end (`backend/dockermanager.go`), but on this project's own test
+  VM `runsc` hit a kernel/network-namespace incompatibility under nested
+  virtualization (`cannot run with network enabled in root network
+  namespace`) that wasn't worth chasing further. `runc` (the default)
+  remains the active isolation boundary, backed by the zero-egress shadow
+  networks (`Internal: true`) that were already in place regardless.
 - **Interception uses `inotify`/`fsnotify`, not `fanotify`.** A file exists
   at its real path for a short window (moved into quarantine within
   milliseconds of settling, not before it's ever written) rather than being
