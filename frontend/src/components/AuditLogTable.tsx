@@ -60,9 +60,21 @@ function relativeTime(iso: string): string {
   return rtf.format(Math.round(seconds), "second");
 }
 
+// How a row's source value reads in the table -- "interceptor" (the
+// internal source string detonateAndScore is called with for an
+// auto-intercepted download) gets the label the user actually asked to
+// see this by; "sample" (manual dashboard upload) and "monitor"
+// (continuous-monitoring batch) get theirs too. Falls back to the raw
+// value for anything unrecognized, same convention as DetectionsOverview.
+const SOURCE_LABEL: Record<string, string> = {
+  sample: "Manual upload",
+  interceptor: "Auto-intercepted download",
+  monitor: "Continuous monitoring",
+};
+
 function matchesQuery(row: AuditRow, query: string): boolean {
   const q = query.toLowerCase();
-  const haystack = [row.action, row.verdict, row.actor, row.sample_hash, row.hash]
+  const haystack = [row.action, row.verdict, row.actor, row.sample_hash, row.hash, row.source]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -173,6 +185,7 @@ export function AuditLogTable({
                 <th>When</th>
                 <th>File</th>
                 <th>Hash</th>
+                <th>Source</th>
                 <th>Verdict / Action</th>
                 <th>Actor</th>
                 <th>Confidence</th>
@@ -191,6 +204,7 @@ export function AuditLogTable({
                     </td>
                     <td className="mono">{isVerdict ? r.sample_filename || "—" : "—"}</td>
                     <td>{hash ? <CopyHash hash={hash} /> : "—"}</td>
+                    <td>{isVerdict ? SOURCE_LABEL[r.source] ?? r.source : "—"}</td>
                     <td>
                       {isVerdict && Icon ? (
                         <Badge tone={VERDICT_TONE[r.verdict]} icon={<Icon size={14} />}>

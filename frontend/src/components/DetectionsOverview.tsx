@@ -2,7 +2,8 @@ import type { Verdict } from "../types";
 import "./StatStrip.css";
 
 const SOURCE_LABEL: Record<string, string> = {
-  sample: "Upload / intercept",
+  sample: "Manual upload",
+  interceptor: "Auto-intercepted download",
   monitor: "Continuous monitoring",
 };
 

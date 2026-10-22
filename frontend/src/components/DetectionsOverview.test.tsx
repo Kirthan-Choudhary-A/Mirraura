@@ -23,12 +23,13 @@ describe("DetectionsOverview", () => {
   it("counts verdicts by source and detection method", () => {
     const verdicts = [
       makeVerdict({ source: "sample", detection_method: "known_bad_hash" }),
-      makeVerdict({ source: "sample", detection_method: "static_triage" }),
+      makeVerdict({ source: "interceptor", detection_method: "static_triage" }),
       makeVerdict({ source: "monitor", detection_method: "dynamic" }),
     ];
     const html = renderToStaticMarkup(<DetectionsOverview verdicts={verdicts} />);
 
-    expect(html).toContain("Upload / intercept");
+    expect(html).toContain("Manual upload");
+    expect(html).toContain("Auto-intercepted download");
     expect(html).toContain("Continuous monitoring");
     expect(html).toContain("Known-bad hash");
     expect(html).toContain("Static triage");
