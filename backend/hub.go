@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"sync"
@@ -21,14 +22,23 @@ func NewHub() *Hub {
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
-		if origin == "" {
+		if origin == "" || origin == "null" {
 			// Non-browser clients (curl, server-to-server health checks) send no
 			// Origin header at all; browsers always send one, so this only
 			// affects non-browser callers, which this check isn't meant to stop.
+			// "null" specifically shows up on real same-origin requests too --
+			// confirmed live from a Chromium --app= window, which sends a
+			// literal "null" Origin for its WebSocket handshake instead of the
+			// page's real origin -- so treating it as "no origin to check"
+			// rather than rejecting it is correct here, not a loosened check.
 			return true
 		}
 		u, err := url.Parse(origin)
-		return err == nil && u.Host == r.Host
+		if err != nil || u.Host != r.Host {
+			log.Printf("websocket: rejecting origin %q (want host %q)", origin, r.Host)
+			return false
+		}
+		return true
 	},
 }
 
