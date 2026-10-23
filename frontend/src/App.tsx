@@ -183,6 +183,7 @@ function App() {
         <TabPanel id="audit" active={bottomTab}>
           <AuditLogTable
             refreshKey={refreshKey}
+            role={role}
             onSessionExpired={handleSessionExpired}
             onVerdictsChange={setVerdicts}
             onChainStatusChange={setChainStatus}

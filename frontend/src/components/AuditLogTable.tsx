@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, HelpCircle, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, HelpCircle, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
 import { ApiError, fetchChainStatus, fetchVerdicts } from "../api";
 import type { ChainStatus } from "../api";
 import type { Verdict } from "../types";
@@ -81,6 +81,19 @@ function matchesQuery(row: AuditRow, query: string): boolean {
   return haystack.includes(q);
 }
 
+// Downloads the full (unfiltered, unpaginated) audit log as a timestamped
+// JSON file, client-side -- the data's already in memory from the normal
+// fetch, no new endpoint needed.
+function downloadAuditLog(rows: AuditRow[]) {
+  const blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `mirraura-audit-log-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function ChainIndicator({ status }: { status: ChainStatus | null }) {
   if (!status) return null;
   if (status.intact) {
@@ -101,11 +114,13 @@ function ChainIndicator({ status }: { status: ChainStatus | null }) {
 
 export function AuditLogTable({
   refreshKey,
+  role,
   onSessionExpired,
   onVerdictsChange,
   onChainStatusChange,
 }: {
   refreshKey: number;
+  role?: "admin" | "analyst";
   onSessionExpired?: () => void;
   onVerdictsChange?: (v: Verdict[]) => void;
   onChainStatusChange?: (s: ChainStatus | null) => void;
@@ -171,6 +186,16 @@ export function AuditLogTable({
           aria-label="Search audit log"
         />
         <span className="audit-count mono">{filtered.length} entries</span>
+        {role === "admin" && rows.length > 0 && (
+          <button
+            type="button"
+            className="audit-download"
+            onClick={() => downloadAuditLog(rows)}
+          >
+            <Download size={14} aria-hidden="true" />
+            Download
+          </button>
+        )}
       </div>
 
       {loading ? (
