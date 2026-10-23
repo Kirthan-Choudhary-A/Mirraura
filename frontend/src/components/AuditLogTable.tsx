@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, HelpCircle, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowDownNarrowWide,
+  ArrowUpNarrowWide,
+  CheckCircle2,
+  Download,
+  HelpCircle,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
+} from "lucide-react";
 import { ApiError, fetchChainStatus, fetchVerdicts } from "../api";
 import type { ChainStatus } from "../api";
 import type { Verdict } from "../types";
@@ -166,38 +176,62 @@ export function AuditLogTable({
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const { push } = useToast();
 
   useEffect(() => {
-    fetchVerdicts()
-      .then((v) => {
-        setRows(v as AuditRow[]);
-        onVerdictsChange?.(v);
-        setError(null);
-      })
-      .catch((e) => {
-        if (e instanceof ApiError && e.status === 401) return onSessionExpired?.();
-        if (e instanceof ApiError && e.status === 403) return push("Admins only", "error");
-        setError(e instanceof Error ? e.message : "failed to load audit log");
-      })
-      .finally(() => setLoading(false));
-    fetchChainStatus()
-      .then((s) => {
-        setChainStatus(s);
-        setChainCheckedAt(new Date());
-        onChainStatusChange?.(s);
-      })
-      .catch(() => {
-        setChainStatus(null);
-        setChainCheckedAt(null);
-        onChainStatusChange?.(null);
-      });
+    let cancelled = false;
+
+    function load() {
+      fetchVerdicts()
+        .then((v) => {
+          if (cancelled) return;
+          setRows(v as AuditRow[]);
+          onVerdictsChange?.(v);
+          setError(null);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          if (e instanceof ApiError && e.status === 401) return onSessionExpired?.();
+          if (e instanceof ApiError && e.status === 403) return push("Admins only", "error");
+          setError(e instanceof Error ? e.message : "failed to load audit log");
+        })
+        .finally(() => !cancelled && setLoading(false));
+      fetchChainStatus()
+        .then((s) => {
+          if (cancelled) return;
+          setChainStatus(s);
+          setChainCheckedAt(new Date());
+          onChainStatusChange?.(s);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setChainStatus(null);
+          setChainCheckedAt(null);
+          onChainStatusChange?.(null);
+        });
+    }
+
+    load();
+    // The WebSocket-driven refreshKey bump (App.tsx, on every "verdict"
+    // message) is the primary trigger, but a short poll underneath it means
+    // a new entry (e.g. from the auto-interceptor, a separate OS process
+    // the browser has no direct line to) shows up within a few seconds
+    // even if a WS message is ever missed, instead of needing a full
+    // logout/login to force a refetch.
+    const interval = setInterval(load, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [refreshKey]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return rows;
-    return rows.filter((r) => matchesQuery(r, query.trim()));
-  }, [rows, query]);
+    const base = query.trim() ? rows.filter((r) => matchesQuery(r, query.trim())) : rows;
+    // rows arrive oldest-first from the backend (ORDER BY id); reverse for
+    // the newest-first default, a plain copy for oldest-first.
+    return sortOrder === "newest" ? [...base].reverse() : base;
+  }, [rows, query, sortOrder]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
@@ -205,6 +239,11 @@ export function AuditLogTable({
 
   function handleQueryChange(value: string) {
     setQuery(value);
+    setPage(0);
+  }
+
+  function toggleSortOrder() {
+    setSortOrder((o) => (o === "newest" ? "oldest" : "newest"));
     setPage(0);
   }
 
@@ -222,6 +261,14 @@ export function AuditLogTable({
           onChange={(e) => handleQueryChange(e.target.value)}
           aria-label="Search audit log"
         />
+        <button type="button" className="audit-sort" onClick={toggleSortOrder}>
+          {sortOrder === "newest" ? (
+            <ArrowDownNarrowWide size={14} aria-hidden="true" />
+          ) : (
+            <ArrowUpNarrowWide size={14} aria-hidden="true" />
+          )}
+          {sortOrder === "newest" ? "Newest first" : "Oldest first"}
+        </button>
         <span className="audit-count mono">{filtered.length} entries</span>
         {role === "admin" && rows.length > 0 && (
           <span className="audit-download-group">
