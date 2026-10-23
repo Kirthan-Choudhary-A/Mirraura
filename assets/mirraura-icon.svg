@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="shield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2dd4bf"/>
+      <stop offset="100%" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <path
+    d="M32 4 L54 12 V30 C54 44 44 54 32 60 C20 54 10 44 10 30 V12 Z"
+    fill="url(#shield)" stroke="#0a3f3a" stroke-width="1.5"/>
+  <ellipse cx="32" cy="31" rx="15" ry="9" fill="#ffffff"/>
+  <circle cx="32" cy="31" r="6" fill="#0f766e"/>
+  <circle cx="34" cy="29" r="1.8" fill="#ffffff"/>
+</svg>
