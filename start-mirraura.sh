@@ -23,7 +23,19 @@ else
   echo "  sudo systemctl start mirraura-interceptor"
 fi
 
-xdg-open http://localhost:5173 >/dev/null 2>&1 &
+# --app opens a clean standalone window (no address bar/tabs) instead of
+# a regular browser tab, so the dashboard looks and feels like its own
+# desktop app. Only Chromium-family browsers support this flag; anything
+# else falls back to a normal browser tab.
+if command -v chromium >/dev/null 2>&1; then
+  chromium --app="http://localhost:5173" --new-window >/dev/null 2>&1 &
+elif command -v chromium-browser >/dev/null 2>&1; then
+  chromium-browser --app="http://localhost:5173" --new-window >/dev/null 2>&1 &
+elif command -v google-chrome >/dev/null 2>&1; then
+  google-chrome --app="http://localhost:5173" --new-window >/dev/null 2>&1 &
+else
+  xdg-open http://localhost:5173 >/dev/null 2>&1 &
+fi
 
 echo
 read -r -p "Press Enter to close this window..."
