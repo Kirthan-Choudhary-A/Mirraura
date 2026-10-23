@@ -81,26 +81,59 @@ function matchesQuery(row: AuditRow, query: string): boolean {
   return haystack.includes(q);
 }
 
-// Downloads the full (unfiltered, unpaginated) audit log as a timestamped
-// JSON file, client-side -- the data's already in memory from the normal
-// fetch, no new endpoint needed.
-function downloadAuditLog(rows: AuditRow[]) {
-  const blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json" });
+function triggerDownload(content: string, mime: string, filename: string) {
+  const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `mirraura-audit-log-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }
 
-function ChainIndicator({ status }: { status: ChainStatus | null }) {
+// Downloads the full (unfiltered, unpaginated) audit log, client-side --
+// the data's already in memory from the normal fetch, no new endpoint
+// needed either way.
+function downloadAuditLogJson(rows: AuditRow[]) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  triggerDownload(JSON.stringify(rows, null, 2), "application/json", `mirraura-audit-log-${stamp}.json`);
+}
+
+const CSV_COLUMNS: (keyof AuditRow)[] = [
+  "timestamp",
+  "sample_filename",
+  "sample_hash",
+  "hash",
+  "source",
+  "verdict",
+  "action",
+  "actor",
+  "confidence",
+];
+
+function csvCell(value: unknown): string {
+  const s = value === null || value === undefined ? "" : String(value);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadAuditLogCsv(rows: AuditRow[]) {
+  const lines = [CSV_COLUMNS.join(",")];
+  for (const r of rows) {
+    lines.push(CSV_COLUMNS.map((c) => csvCell(r[c])).join(","));
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  triggerDownload(lines.join("\n"), "text/csv", `mirraura-audit-log-${stamp}.csv`);
+}
+
+function ChainIndicator({ status, checkedAt }: { status: ChainStatus | null; checkedAt: Date | null }) {
   if (!status) return null;
+  const when = checkedAt ? relativeTime(checkedAt.toISOString()) : null;
   if (status.intact) {
     return (
       <p className="chain-indicator" data-intact="true">
         <ShieldCheck size={16} aria-hidden="true" />
         Chain intact · {status.entries} entries
+        {when && <span className="chain-indicator__checked"> · verified {when}</span>}
       </p>
     );
   }
@@ -108,6 +141,7 @@ function ChainIndicator({ status }: { status: ChainStatus | null }) {
     <p className="chain-indicator" data-intact="false">
       <ShieldX size={16} aria-hidden="true" />
       Chain broken at entry {status.broken_at}
+      {when && <span className="chain-indicator__checked"> · checked {when}</span>}
     </p>
   );
 }
@@ -127,6 +161,7 @@ export function AuditLogTable({
 }) {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [chainStatus, setChainStatus] = useState<ChainStatus | null>(null);
+  const [chainCheckedAt, setChainCheckedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
@@ -149,10 +184,12 @@ export function AuditLogTable({
     fetchChainStatus()
       .then((s) => {
         setChainStatus(s);
+        setChainCheckedAt(new Date());
         onChainStatusChange?.(s);
       })
       .catch(() => {
         setChainStatus(null);
+        setChainCheckedAt(null);
         onChainStatusChange?.(null);
       });
   }, [refreshKey]);
@@ -173,7 +210,7 @@ export function AuditLogTable({
 
   return (
     <Card title="Audit log">
-      <ChainIndicator status={chainStatus} />
+      <ChainIndicator status={chainStatus} checkedAt={chainCheckedAt} />
       {error && <p className="error-text">{error}</p>}
 
       <div className="audit-controls">
@@ -187,14 +224,16 @@ export function AuditLogTable({
         />
         <span className="audit-count mono">{filtered.length} entries</span>
         {role === "admin" && rows.length > 0 && (
-          <button
-            type="button"
-            className="audit-download"
-            onClick={() => downloadAuditLog(rows)}
-          >
-            <Download size={14} aria-hidden="true" />
-            Download
-          </button>
+          <span className="audit-download-group">
+            <button type="button" className="audit-download" onClick={() => downloadAuditLogJson(rows)}>
+              <Download size={14} aria-hidden="true" />
+              JSON
+            </button>
+            <button type="button" className="audit-download" onClick={() => downloadAuditLogCsv(rows)}>
+              <Download size={14} aria-hidden="true" />
+              CSV
+            </button>
+          </span>
         )}
       </div>
 

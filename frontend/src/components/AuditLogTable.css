@@ -19,6 +19,11 @@
   background: var(--sev-compromised-bg);
 }
 
+.chain-indicator__checked {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
 .audit-controls {
   display: flex;
   align-items: center;
@@ -41,6 +46,11 @@
   color: var(--text-muted);
   font-size: var(--fs-2);
   white-space: nowrap;
+}
+
+.audit-download-group {
+  display: flex;
+  gap: var(--sp-1);
 }
 
 .audit-download {
