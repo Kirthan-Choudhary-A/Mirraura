@@ -196,6 +196,37 @@ It talks to the backend over the same origin the frontend uses
 `INTERCEPTOR_TOKEN` rather than a login session, since there's no human at
 the keyboard for it to log in as.
 
+## Desktop download overlay
+
+`overlay/` is a purely visual companion to the interceptor: a host-side
+PyQt5 daemon that renders every run as a full-screen translucent glass
+scene — your device linking to the shadow node, honeypots spawning, the
+file detonating inside them — resolved by the real verdict:
+**Normal/Inconclusive** dissolves the honeypots and returns the file;
+**Suspicious/Compromised** locks it into a shadow locker. It consumes
+only the same `/api/live` WebSocket the dashboard uses, so it never
+changes what the pipeline decides.
+
+It also ships its own Downloads watcher (files whose size has settled in
+`MIRRAURA_DOWNLOADS_DIR`, default `~/Downloads`, are uploaded via
+`/api/samples` for detonation). If the interceptor daemon is already
+running on the machine, it has first claim on new files — you can point
+`MIRRAURA_DOWNLOADS_DIR` at a path the interceptor doesn't watch to avoid
+duplicate detonations.
+
+```bash
+# with the Docker stack already running, in a graphical Linux session:
+./overlay/run-overlay.sh
+
+# preview either ending without a backend:
+./overlay/run-overlay.sh --demo safe
+./overlay/run-overlay.sh --demo lock
+```
+
+Translucency needs a compositing window manager (default on modern
+desktops). On Wayland, run with `QT_QPA_PLATFORM=xcb` if the window does
+not composite or draw above other windows. ESC dismisses a running scene.
+
 ## API
 
 All routes require the session cookie except `/api/health` and
