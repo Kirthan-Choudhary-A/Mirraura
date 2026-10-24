@@ -3,19 +3,46 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
-	if len(os.Getenv("MIRRAURA_ADMIN_PASSWORD")) < 12 {
-		log.Fatal("MIRRAURA_ADMIN_PASSWORD must be set and at least 12 characters")
+	migrateOnly := flag.Bool("migrate-only", false, "apply pending migrations, then exit without starting the server")
+	flag.Parse()
+	ctx := context.Background()
+
+	// migrate-only mode is the only place BACKEND_MIGRATIONS_DATABASE_URL (the
+	// Postgres superuser) is used. The server itself never reads it, so it's
+	// never present in the long-running server container's environment.
+	if *migrateOnly {
+		backendMigrationsURL := os.Getenv("BACKEND_MIGRATIONS_DATABASE_URL")
+		backendDBURL := os.Getenv("BACKEND_DATABASE_URL")
+		if backendMigrationsURL == "" || backendDBURL == "" {
+			log.Fatal("BACKEND_MIGRATIONS_DATABASE_URL and BACKEND_DATABASE_URL must both be set")
+		}
+		if err := RunMigrations(ctx, backendMigrationsURL, backendDBURL, "migrations"); err != nil {
+			log.Fatalf("RunMigrations: %v", err)
+		}
+		return
 	}
-	users, err := loadUsers()
+
+	backendDBURL := os.Getenv("BACKEND_DATABASE_URL")
+	if backendDBURL == "" {
+		log.Fatal("BACKEND_DATABASE_URL must be set")
+	}
+	pool, err := NewPool(ctx, backendDBURL)
 	if err != nil {
-		log.Fatalf("loadUsers: %v", err)
+		log.Fatalf("NewPool: %v", err)
+	}
+
+	if err := SeedUsers(ctx, pool); err != nil {
+		log.Fatalf("SeedUsers: %v", err)
 	}
 
 	verdictEngineURL := os.Getenv("VERDICT_ENGINE_URL")
@@ -28,13 +55,14 @@ func main() {
 	}
 	hub := NewHub()
 	mon := NewMonitor(dm, verdictEngineURL, hub)
-	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	initCtx, initCancel := context.WithTimeout(ctx, 10*time.Second)
 	mon.InitIsolatedState(initCtx)
 	initCancel()
 
-	store := NewSessionStore()
+	store := NewSessionStore(pool)
 	limiter := NewLoginLimiter()
-	mux := newMux(dm, verdictEngineURL, hub, mon, store, users, limiter)
+	interceptorToken := os.Getenv("INTERCEPTOR_TOKEN")
+	mux := newMux(dm, verdictEngineURL, hub, mon, store, pool, limiter, interceptorToken)
 
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -43,6 +71,18 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			if err := mon.Tick(ctx); err != nil {
 				log.Printf("monitor tick failed: %v", err)
+			}
+			cancel()
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := store.CleanupExpired(cleanupCtx); err != nil {
+				log.Printf("session cleanup failed: %v", err)
 			}
 			cancel()
 		}
@@ -58,21 +98,51 @@ func main() {
 	}
 }
 
-func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, store *SessionStore, users map[string]User, limiter *LoginLimiter) *http.ServeMux {
+func newMux(dm *DockerManager, verdictEngineURL string, hub *Hub, mon *Monitor, store *SessionStore, pool *pgxpool.Pool, limiter *LoginLimiter, interceptorToken string) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", healthHandler)
-	mux.HandleFunc("/api/login", loginHandler(store, users, limiter))
+	mux.HandleFunc("/api/login", loginHandler(store, pool, limiter))
 	mux.Handle("/api/logout", requireAuth(store)(logoutHandler(store)))
 	mux.Handle("/api/me", requireAuth(store)(meHandler()))
 	mux.Handle("/api/samples", requireAuth(store)(samplesHandler(dm, verdictEngineURL, hub)))
 	mux.Handle("/api/verdicts", requireAuth(store)(verdictsListHandler(verdictEngineURL)))
 	mux.Handle("/api/verdicts/", requireAuth(store)(verdictDetailHandler(verdictEngineURL)))
+	mux.Handle("/api/audit/verify", requireAuth(store)(chainVerifyHandler(verdictEngineURL)))
 	mux.Handle("/api/live", requireAuth(store)(http.HandlerFunc(hub.HandleWS)))
 	mux.Handle("/api/monitor/status", requireAuth(store)(monitorStatusHandler(mon)))
 	mux.Handle("/api/monitor/reconnect", requireAuth(store)(requireRole("admin")(monitorReconnectHandler(mon))))
 	mux.Handle("/api/hashes", requireAuth(store)(hashesHandler(verdictEngineURL)))
 	mux.Handle("/api/hashes/", requireAuth(store)(requireRole("admin")(hashDecisionHandler(verdictEngineURL))))
+	mux.Handle("/api/corpus", requireAuth(store)(corpusHandler(verdictEngineURL)))
+	mux.Handle("/api/corpus/", requireAuth(store)(requireRole("admin")(corpusDecisionHandler(verdictEngineURL))))
+	mux.Handle("/api/users", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
+		http.MethodGet:  listUsersHandler(pool),
+		http.MethodPost: createUserHandler(pool, verdictEngineURL),
+	}))))
+	mux.Handle("/api/users/{username}", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
+		http.MethodDelete: deleteUserHandler(store, pool, verdictEngineURL),
+	}))))
+	mux.Handle("/api/users/{username}/role", requireAuth(store)(requireRole("admin")(dispatchByMethod(map[string]http.HandlerFunc{
+		http.MethodPatch: updateUserRoleHandler(store, pool, verdictEngineURL),
+	}))))
+	mux.Handle("/api/intercept", requireToken(interceptorToken)(interceptHandler(dm, verdictEngineURL, hub, pool)))
+	mux.Handle("/api/intercept/pending", requireAuth(store)(requireRole("admin")(quarantinePendingHandler(pool))))
+	mux.Handle("/api/intercept/{id}/approve", requireAuth(store)(requireRole("admin")(quarantineDecisionHandler(pool, verdictEngineURL, "approve"))))
+	mux.Handle("/api/intercept/{id}/reject", requireAuth(store)(requireRole("admin")(quarantineDecisionHandler(pool, verdictEngineURL, "reject"))))
+	mux.Handle("/api/intercept/{id}/status", requireToken(interceptorToken)(quarantineStatusHandler(pool)))
 	return mux
+}
+
+// dispatchByMethod routes to the handler registered for r.Method, or 405.
+func dispatchByMethod(byMethod map[string]http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h, ok := byMethod[r.Method]
+		if !ok {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h(w, r)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {

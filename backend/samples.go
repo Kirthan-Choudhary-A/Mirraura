@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -54,74 +55,134 @@ func samplesHandler(dm *DockerManager, verdictEngineURL string, hub Broadcaster)
 			http.Error(w, "failed to read upload", http.StatusInternalServerError)
 			return
 		}
-		sum := sha256.Sum256(data)
-		sampleHash := hex.EncodeToString(sum[:])
-
-		tmpPath := filepath.Join(os.TempDir(), safeFilename)
-		if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-			http.Error(w, "failed to stage upload", http.StatusInternalServerError)
-			return
-		}
-		defer os.Remove(tmpPath)
-
-		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-		defer cancel()
-
-		runID := randomID()
-		networkID, err := dm.CreateShadowNetwork(ctx, "mirraura-net-"+runID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("network create failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-		var containerID string
-		defer func() { dm.Teardown(context.Background(), containerID, networkID) }()
-
-		containerID, err = dm.StartShadowContainer(ctx, shadowImage, networkID, "mirraura-shadow-"+runID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("container start failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		if err := dm.CopyFileIntoContainer(ctx, containerID, tmpPath, "/samples/"); err != nil {
-			http.Error(w, fmt.Sprintf("copy into container failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		sensorCtx, sensorCancel := context.WithTimeout(ctx, sensorTimeout)
-		defer sensorCancel()
-
-		lines, err := dm.RunSensor(sensorCtx, containerID, "/samples/"+safeFilename)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("sensor run failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		events := []json.RawMessage{}
-		for line := range lines {
-			if !json.Valid([]byte(line)) {
-				log.Printf("sensor: non-JSON line ignored: %s", line)
-				continue
-			}
-			raw := json.RawMessage(line)
-			hub.Broadcast(map[string]any{"type": "event", "source": "sample", "data": raw})
-			events = append(events, raw)
-		}
-		timedOut := sensorCtx.Err() != nil
 
 		actor, _ := sessionFromContext(r.Context())
-		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, safeFilename, "sample", actor.Username, timedOut, events)
+		verdict, err := detonateAndScore(r.Context(), dm, verdictEngineURL, hub, data, safeFilename, "sample", actor.Username)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("scoring failed: %v", err), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		hub.Broadcast(map[string]any{"type": "verdict", "source": "sample", "data": verdict})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(verdict)
 	}
 }
 
-func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor string, timedOut bool, events []json.RawMessage) (*Verdict, error) {
+// detonateAndScore runs data (a sample's raw bytes) through a fresh shadow
+// container and scores the resulting events. Shared by the human-triggered
+// upload path (samplesHandler) and the automatic interceptor path
+// (interceptHandler) -- both produce a verdict the exact same way, the only
+// difference is where the bytes and the actor name come from.
+func detonateAndScore(reqCtx context.Context, dm *DockerManager, verdictEngineURL string, hub Broadcaster, data []byte, filename, source, actor string) (*Verdict, error) {
+	sum := sha256.Sum256(data)
+	sampleHash := hex.EncodeToString(sum[:])
+
+	staticMatches, err := staticTriage(verdictEngineURL, data)
+	if err != nil {
+		// Fails open to detonation, not open to a verdict: a triage-call
+		// failure (network blip, verdict-engine briefly down) must never
+		// skip scoring entirely, only skip the "detonation" optimization.
+		log.Printf("static triage failed, falling back to detonation: %v", err)
+	} else if len(staticMatches) > 0 {
+		verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, filename, source, actor, false, []json.RawMessage{}, staticMatches)
+		if err != nil {
+			return nil, fmt.Errorf("scoring failed: %w", err)
+		}
+		hub.Broadcast(map[string]any{"type": "verdict", "source": source, "data": verdict})
+		return verdict, nil
+	}
+
+	tmpPath := filepath.Join(os.TempDir(), filename)
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return nil, fmt.Errorf("failed to stage upload: %w", err)
+	}
+	defer os.Remove(tmpPath)
+
+	ctx, cancel := context.WithTimeout(reqCtx, 60*time.Second)
+	defer cancel()
+
+	runID := randomID()
+	networkID, err := dm.CreateShadowNetwork(ctx, "mirraura-net-"+runID)
+	if err != nil {
+		return nil, fmt.Errorf("network create failed: %w", err)
+	}
+	var containerID string
+	defer func() { dm.Teardown(context.Background(), containerID, networkID) }()
+
+	containerID, err = dm.StartShadowContainer(ctx, shadowImage, networkID, "mirraura-shadow-"+runID)
+	if err != nil {
+		return nil, fmt.Errorf("container start failed: %w", err)
+	}
+
+	if err := dm.CopyFileIntoContainer(ctx, containerID, tmpPath, "/samples/"); err != nil {
+		return nil, fmt.Errorf("copy into container failed: %w", err)
+	}
+
+	sensorCtx, sensorCancel := context.WithTimeout(ctx, sensorTimeout)
+	defer sensorCancel()
+
+	lines, err := dm.RunSensor(sensorCtx, containerID, "/samples/"+filename)
+	if err != nil {
+		return nil, fmt.Errorf("sensor run failed: %w", err)
+	}
+
+	events := []json.RawMessage{}
+	for line := range lines {
+		if !json.Valid([]byte(line)) {
+			log.Printf("sensor: non-JSON line ignored: %s", line)
+			continue
+		}
+		raw := json.RawMessage(line)
+		hub.Broadcast(map[string]any{"type": "event", "source": source, "data": raw})
+		events = append(events, raw)
+	}
+	timedOut := sensorCtx.Err() != nil
+
+	verdict, err := scoreWithVerdictEngine(verdictEngineURL, sampleHash, filename, source, actor, timedOut, events, nil)
+	if err != nil {
+		return nil, fmt.Errorf("scoring failed: %w", err)
+	}
+	hub.Broadcast(map[string]any{"type": "verdict", "source": source, "data": verdict})
+	return verdict, nil
+}
+
+// staticTriage posts data to the verdict engine's /triage endpoint and
+// returns the (possibly empty) list of static match reasons, without
+// touching Docker. Called before detonation so a decisive match can skip
+// it entirely.
+func staticTriage(baseURL string, data []byte) ([]string, error) {
+	body, err := json.Marshal(map[string]any{
+		"sample_content_b64": base64.StdEncoding.EncodeToString(data),
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := httpClient.Post(baseURL+"/triage", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("verdict-engine returned %d: %s", resp.StatusCode, string(b))
+	}
+	var out struct {
+		Matches []string `json:"matches"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Matches, nil
+}
+
+func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor string, timedOut bool, events []json.RawMessage, staticMatches []string) (*Verdict, error) {
+	// A nil Go slice marshals to JSON null, which Pydantic's
+	// static_matches: List[str] rejects outright (422) -- every caller
+	// that has nothing to report passes nil here, so normalize it rather
+	// than pushing a []string{} literal onto every call site.
+	if staticMatches == nil {
+		staticMatches = []string{}
+	}
 	body, err := json.Marshal(map[string]any{
 		"sample_hash":     sampleHash,
 		"sample_filename": sampleFilename,
@@ -129,6 +190,7 @@ func scoreWithVerdictEngine(baseURL, sampleHash, sampleFilename, source, actor s
 		"events":          events,
 		"source":          source,
 		"actor":           actor,
+		"static_matches":  staticMatches,
 	})
 	if err != nil {
 		return nil, err

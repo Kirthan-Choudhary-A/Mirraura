@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
@@ -11,11 +12,35 @@ import (
 	"testing"
 
 	"github.com/gorilla/websocket"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
-func testUsers(t *testing.T) map[string]User {
+func testAuthPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
+	adminURL := testAdminURL(t)
+	// Same shared role as session_test.go's newTestSessionStore -- see the
+	// comment there for why every test against the real migrations
+	// directory must agree on one role name.
+	runtimeURL := testRuntimeURL(t, adminURL, "backend_role", "backend_test_pw")
+	ctx := context.Background()
+	if err := RunMigrations(ctx, adminURL, runtimeURL, "migrations"); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+	pool, err := NewPool(ctx, runtimeURL)
+	if err != nil {
+		t.Fatalf("NewPool(runtime): %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, "DELETE FROM sessions")
+		pool.Close()
+	})
+	return pool
+}
+
+func seedTestUsers(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
 	adminHash, err := bcrypt.GenerateFromPassword([]byte("adminpassword123"), bcrypt.DefaultCost)
 	if err != nil {
 		t.Fatalf("GenerateFromPassword: %v", err)
@@ -24,17 +49,24 @@ func testUsers(t *testing.T) map[string]User {
 	if err != nil {
 		t.Fatalf("GenerateFromPassword: %v", err)
 	}
-	return map[string]User{
-		"admin":   {Username: "admin", PasswordHash: string(adminHash), Role: "admin"},
-		"analyst": {Username: "analyst", PasswordHash: string(analystHash), Role: "analyst"},
+	if _, err := pool.Exec(ctx, "INSERT INTO users (username, password_hash, role) VALUES ('admin', $1, 'admin')", string(adminHash)); err != nil {
+		t.Fatalf("seed admin: %v", err)
 	}
+	if _, err := pool.Exec(ctx, "INSERT INTO users (username, password_hash, role) VALUES ('analyst', $1, 'analyst')", string(analystHash)); err != nil {
+		t.Fatalf("seed analyst: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, "DELETE FROM users")
+	})
 }
 
 func testMux(t *testing.T) *http.ServeMux {
 	t.Helper()
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	return newMux(nil, "http://unused", hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	return newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 }
 
 func TestLoginSucceedsAndSetsCookie(t *testing.T) {
@@ -167,7 +199,9 @@ func TestAnalystGets403OnHashApprove(t *testing.T) {
 
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
-	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -182,6 +216,32 @@ func TestAnalystGets403OnHashApprove(t *testing.T) {
 	}
 }
 
+func TestAnalystGets403OnCorpusApprove(t *testing.T) {
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"hash":"abc","status":"approved"}`))
+	}))
+	defer fakeEngine.Close()
+
+	hub := NewHub()
+	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client, _ := login(t, server, "analyst", "analystpassword123")
+	resp, err := client.Post(server.URL+"/api/corpus/abc/approve", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 for an analyst approving a corpus sample, got %d", resp.StatusCode)
+	}
+}
+
 func TestAdminCanApproveHash(t *testing.T) {
 	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -191,7 +251,9 @@ func TestAdminCanApproveHash(t *testing.T) {
 
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, fakeEngine.URL, hub)
-	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, fakeEngine.URL, hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -209,7 +271,9 @@ func TestAdminCanApproveHash(t *testing.T) {
 func TestWebSocketRejectedWithoutCookie(t *testing.T) {
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -230,7 +294,9 @@ func TestWebSocketRejectedWithoutCookie(t *testing.T) {
 func TestWebSocketAcceptedWithValidCookie(t *testing.T) {
 	hub := NewHub()
 	mon := NewMonitor(&fakeMonitorDocker{}, "http://unused", hub)
-	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(), testUsers(t), NewLoginLimiter())
+	pool := testAuthPool(t)
+	seedTestUsers(t, pool)
+	mux := newMux(nil, "http://unused", hub, mon, NewSessionStore(pool), pool, NewLoginLimiter(), "test-interceptor-token")
 	server := httptest.NewServer(mux)
 	defer server.Close()
 

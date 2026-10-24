@@ -20,6 +20,14 @@ import (
 
 type DockerManager struct {
 	cli *client.Client
+	// shadowRuntime is the OCI runtime the shadow container starts under.
+	// Empty means "use the Docker daemon's configured default" (runc).
+	// Set via SHADOW_RUNTIME=runsc once gVisor is installed on the host and
+	// registered with the daemon -- a stronger isolation boundary than
+	// runc's shared-kernel namespaces, since gVisor intercepts syscalls in
+	// userspace instead of letting them reach the host kernel directly.
+	// Left unset, nothing about detonation changes.
+	shadowRuntime string
 }
 
 func NewDockerManager() (*DockerManager, error) {
@@ -27,7 +35,7 @@ func NewDockerManager() (*DockerManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &DockerManager{cli: cli}, nil
+	return &DockerManager{cli: cli, shadowRuntime: os.Getenv("SHADOW_RUNTIME")}, nil
 }
 
 func (m *DockerManager) CreateShadowNetwork(ctx context.Context, name string) (string, error) {
@@ -60,6 +68,7 @@ func (m *DockerManager) StartShadowContainer(ctx context.Context, image, network
 			// writable tmpfs mount at the destination path.
 			ReadonlyRootfs: true,
 			Tmpfs:          map[string]string{"/tmp": "exec", "/samples": "exec"},
+			Runtime:        m.shadowRuntime,
 		},
 		&network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{

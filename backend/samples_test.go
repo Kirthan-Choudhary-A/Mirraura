@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +35,7 @@ func TestScoreWithVerdictEngine(t *testing.T) {
 	}))
 	defer fakeEngine.Close()
 
-	v, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", "", false, nil)
+	v, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", "", false, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,7 +53,7 @@ func TestScoreWithVerdictEngineSendsTimedOutFlag(t *testing.T) {
 	}))
 	defer fakeEngine.Close()
 
-	_, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", "", true, nil)
+	_, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", "", true, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,12 +71,87 @@ func TestScoreWithVerdictEngineSendsActor(t *testing.T) {
 	}))
 	defer fakeEngine.Close()
 
-	_, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", "alice", false, nil)
+	_, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", "alice", false, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotBody["actor"] != "alice" {
 		t.Fatalf("expected actor=alice in request body, got %v", gotBody["actor"])
+	}
+}
+
+// TestScoreWithVerdictEngineSendsEmptyArrayNotNullStaticMatches guards
+// against a nil Go slice marshaling to the JSON literal null, which
+// verdict-engine's static_matches: List[str] field rejects with a 422 --
+// this exact bug shipped once already and was caught live via a real
+// dashboard upload, not a unit test.
+func TestScoreWithVerdictEngineSendsEmptyArrayNotNullStaticMatches(t *testing.T) {
+	var gotBody map[string]any
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"static_matches":null`) {
+			t.Errorf("static_matches must never serialize as null, got: %s", body)
+		}
+		json.Unmarshal(body, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(Verdict{VerdictID: "v1", Verdict: "Normal"})
+	}))
+	defer fakeEngine.Close()
+
+	_, err := scoreWithVerdictEngine(fakeEngine.URL, "somehash", "file.bin", "sample", "", false, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStaticTriageParsesMatches(t *testing.T) {
+	var gotBody map[string]any
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"matches": []string{"YARA rule 'X' matched"}})
+	}))
+	defer fakeEngine.Close()
+
+	matches, err := staticTriage(fakeEngine.URL, []byte("hello"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 1 || matches[0] != "YARA rule 'X' matched" {
+		t.Fatalf("unexpected matches: %v", matches)
+	}
+	if _, ok := gotBody["sample_content_b64"]; !ok {
+		t.Fatalf("expected sample_content_b64 in request body, got %v", gotBody)
+	}
+}
+
+func TestDetonateAndScoreSkipsDetonationOnStaticMatch(t *testing.T) {
+	fakeEngine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/triage":
+			json.NewEncoder(w).Encode(map[string]any{"matches": []string{"YARA rule 'EICAR_Test_String' matched"}})
+		case "/score":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["static_matches"] == nil {
+				t.Errorf("expected static_matches to be forwarded to /score")
+			}
+			json.NewEncoder(w).Encode(Verdict{VerdictID: "v1", Verdict: "Compromised", Confidence: 1.0})
+		default:
+			t.Fatalf("unexpected call to %s -- detonation should have been skipped", r.URL.Path)
+		}
+	}))
+	defer fakeEngine.Close()
+
+	// dm is nil: if detonation were attempted, this would panic -- proof
+	// the static match actually short-circuited before touching Docker.
+	v, err := detonateAndScore(context.Background(), nil, fakeEngine.URL, &fakeBroadcaster{}, []byte("sample content"), "x.sh", "sample", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.Verdict != "Compromised" {
+		t.Fatalf("expected Compromised, got %s", v.Verdict)
 	}
 }
 

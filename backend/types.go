@@ -26,6 +26,11 @@ type Verdict struct {
 	CausalChain    []string `json:"causal_chain"`
 	Timestamp      string   `json:"timestamp"`
 	PrevLogHash    string   `json:"prev_log_hash"`
+	// Passed through from the verdict engine so the dashboard can show how
+	// the verdict was reached (known_bad_hash, static_triage, dynamic).
+	DetectionMethod string `json:"detection_method"`
+	// "sample" (upload/intercept) or "monitor" (continuous-monitoring batch).
+	Source string `json:"source"`
 }
 
 type Broadcaster interface {

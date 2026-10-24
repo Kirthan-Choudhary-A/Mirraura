@@ -1,3 +1,6 @@
+import base64
+import os
+
 from fastapi.testclient import TestClient
 
 from app import app
@@ -281,3 +284,114 @@ def test_archive_write_failure_does_not_break_score(monkeypatch):
     resp = client.post("/score", json={"sample_hash": "7" * 64, "events": []})
     assert resp.status_code == 200
     assert resp.json()["verdict"] == "Inconclusive"
+
+
+def test_verify_route_returns_chain_status():
+    resp = client.get("/verify")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "intact" in body and "entries" in body and "broken_at" in body
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode()
+
+
+def test_triage_matches_seeded_corpus():
+    data = b"#!/bin/bash\nexec 3<>/dev/tcp/127.0.0.1/31337 2>/dev/null || true\n"
+    resp = client.post("/triage", json={"sample_content_b64": _b64(data)})
+    assert resp.status_code == 200
+    assert any("devtcp_reverse_shell" in m for m in resp.json()["matches"])
+
+
+def test_corpus_submit_approve_then_triage_matches():
+    content = f"corpus-route-test:{os.urandom(32).hex()}".encode()
+    resp = client.post("/corpus", json={"content_b64": _b64(content), "label": "route-test"})
+    assert resp.status_code == 200
+    content_hash = resp.json()["content_hash"]
+
+    assert client.post("/triage", json={"sample_content_b64": _b64(content)}).json()["matches"] == []
+    pending = [s for s in client.get("/corpus").json() if s["content_hash"] == content_hash]
+    assert pending[0]["status"] == "pending"
+
+    approve = client.post(f"/corpus/{content_hash}/approve", json={"actor": "alice"})
+    assert approve.status_code == 200
+    matches = client.post("/triage", json={"sample_content_b64": _b64(content)}).json()["matches"]
+    assert any("route-test" in m for m in matches)
+
+    logged = [r for r in client.get("/verdicts").json() if r.get("action") == "corpus_sample_approved"]
+    assert logged[-1]["hash"] == content_hash and logged[-1]["actor"] == "alice"
+
+
+def test_corpus_submit_rejects_bad_input():
+    assert client.post("/corpus", json={"content_b64": "not base64!!", "label": "x"}).status_code == 400
+    assert client.post("/corpus", json={"content_b64": "", "label": "x"}).status_code == 400
+
+
+def test_corpus_submit_duplicate_conflicts():
+    body = {"content_b64": _b64(os.urandom(32)), "label": "dup"}
+    client.post("/corpus", json=body)
+    assert client.post("/corpus", json=body).status_code == 409
+
+
+def test_corpus_decide_unknown_and_already_decided():
+    assert client.post(f"/corpus/{'0' * 64}/reject", json={}).status_code == 404
+    content_hash = client.post("/corpus", json={"content_b64": _b64(os.urandom(32)), "label": "r"}).json()["content_hash"]
+    assert client.post(f"/corpus/{content_hash}/reject", json={}).status_code == 200
+    assert client.post(f"/corpus/{content_hash}/approve", json={}).status_code == 409
+
+
+def test_detection_method_known_bad_hash():
+    resp = client.post("/score", json={"sample_hash": EICAR_HASH, "events": []})
+    assert resp.json()["detection_method"] == "known_bad_hash"
+
+
+def test_detection_method_known_bad_hash_wins_over_static_matches():
+    resp = client.post(
+        "/score", json={"sample_hash": EICAR_HASH, "events": [], "static_matches": ["YARA rule 'EICAR_Test_String' matched"]}
+    )
+    assert resp.json()["detection_method"] == "known_bad_hash"
+
+
+def test_detection_method_static_triage():
+    resp = client.post(
+        "/score", json={"sample_hash": "e1" * 32, "events": [], "static_matches": ["YARA rule 'X' matched"]}
+    )
+    body = resp.json()
+    assert body["verdict"] == "Compromised"
+    assert body["detection_method"] == "static_triage"
+
+
+def test_detection_method_dynamic_when_timed_out():
+    resp = client.post("/score", json={"sample_hash": "e2" * 32, "events": [], "timed_out": True})
+    assert resp.json()["detection_method"] == "dynamic"
+
+
+def test_detection_method_dynamic_when_scored():
+    resp = client.post("/score", json={"sample_hash": "e3" * 32, "events": []})
+    assert resp.json()["detection_method"] == "dynamic"
+
+
+def test_detection_method_is_stored_in_audit_log():
+    verdict_id = client.post(
+        "/score", json={"sample_hash": "e4" * 32, "events": [], "static_matches": ["x"]}
+    ).json()["verdict_id"]
+    assert client.get(f"/verdicts/{verdict_id}").json()["detection_method"] == "static_triage"
+    assert client.get("/verify").json()["intact"] is True
+
+
+def test_score_defaults_source_to_sample():
+    resp = client.post("/score", json={"sample_hash": "e5" * 32, "events": []})
+    assert resp.json()["source"] == "sample"
+
+
+def test_score_persists_monitor_source():
+    resp = client.post("/score", json={"sample_hash": "e6" * 32, "events": [], "source": "monitor"})
+    assert resp.json()["source"] == "monitor"
+
+
+def test_source_is_stored_in_audit_log():
+    verdict_id = client.post(
+        "/score", json={"sample_hash": "e7" * 32, "events": [], "source": "monitor"}
+    ).json()["verdict_id"]
+    assert client.get(f"/verdicts/{verdict_id}").json()["source"] == "monitor"

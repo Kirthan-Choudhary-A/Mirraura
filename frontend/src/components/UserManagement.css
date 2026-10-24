@@ -1,0 +1,35 @@
+.user-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-2);
+  margin-bottom: var(--sp-3);
+}
+
+.user-table th {
+  text-align: left;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  font-size: var(--fs-1);
+  padding: var(--sp-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.user-table td {
+  padding: var(--sp-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.user-form {
+  display: flex;
+  gap: var(--sp-1);
+  flex-wrap: wrap;
+}
+
+.user-form input,
+.user-form select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px var(--sp-2);
+}

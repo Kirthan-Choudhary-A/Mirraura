@@ -1,7 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { approveHash, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
-import { applyLiveEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
+import { approveHash, fetchChainStatus, fetchHashes, fetchVerdicts, fetchMonitorStatus, rejectHash, uploadSample } from "./api";
+import { createUser, deleteUser, fetchUsers, updateUserRole } from "./api";
+import { approveQuarantine, fetchQuarantinePending, rejectQuarantine } from "./api";
+import { approveCorpusEntry, fetchCorpusPending, rejectCorpusEntry, submitCorpusSample } from "./api";
+import { applyLiveEvent, applyMonitorEvent, nextBackoffMs, shouldUpdateSampleVerdict } from "./api";
 import { ApiError, request } from "./api";
+import { isValidSha256, sha256Hex } from "./api";
 import type { MirraEvent, Verdict } from "./types";
 
 function makeEvent(id: string): MirraEvent {
@@ -40,6 +44,17 @@ describe("api", () => {
   it("fetchMonitorStatus throws when the response is not ok", async () => {
     (fetch as any).mockResolvedValue({ ok: false, text: async () => "boom" });
     await expect(fetchMonitorStatus()).rejects.toThrow("boom");
+  });
+
+  it("fetchChainStatus calls the backend audit/verify endpoint", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ intact: true, entries: 3, broken_at: null }),
+    });
+    const result = await fetchChainStatus();
+    expect(fetch).toHaveBeenCalledWith("/api/audit/verify", expect.objectContaining({ credentials: "same-origin" }));
+    expect(result).toEqual({ intact: true, entries: 3, broken_at: null });
   });
 
   it("uploadSample posts multipart form data and returns the verdict", async () => {
@@ -83,6 +98,76 @@ describe("api", () => {
     await rejectHash("abc123");
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining("/api/hashes/abc123/reject"),
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+});
+
+describe("user management", () => {
+  it("fetchUsers calls the backend users endpoint", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => [{ username: "admin", role: "admin" }],
+    });
+    const result = await fetchUsers();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/users"),
+      expect.objectContaining({ credentials: "same-origin" })
+    );
+    expect(result).toEqual([{ username: "admin", role: "admin" }]);
+  });
+
+  it("createUser posts to the users endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await createUser("bob", "bobspassword123", "analyst");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/users"),
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("deleteUser deletes the specific user", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await deleteUser("bob");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/users/bob"),
+      expect.objectContaining({ method: "DELETE" })
+    );
+  });
+
+  it("updateUserRole patches the role endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await updateUserRole("bob", "admin");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/users/bob/role"),
+      expect.objectContaining({ method: "PATCH" })
+    );
+  });
+
+  it("fetchQuarantinePending calls the intercept pending endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => [{ id: 1 }] });
+    const result = await fetchQuarantinePending();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/intercept/pending"),
+      expect.objectContaining({ credentials: "same-origin" })
+    );
+    expect(result).toEqual([{ id: 1 }]);
+  });
+
+  it("approveQuarantine posts to the quarantine-specific approve endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await approveQuarantine(42);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/intercept/42/approve"),
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("rejectQuarantine posts to the quarantine-specific reject endpoint", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 204 });
+    await rejectQuarantine(42);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/intercept/42/reject"),
       expect.objectContaining({ method: "POST" })
     );
   });
@@ -158,6 +243,8 @@ describe("shouldUpdateSampleVerdict", () => {
     causal_chain: [],
     timestamp: "2026-09-18T00:00:00Z",
     prev_log_hash: "0".repeat(64),
+    detection_method: "dynamic",
+    source: "sample",
   };
 
   it("is true for a sample-source verdict", () => {
@@ -173,6 +260,23 @@ describe("shouldUpdateSampleVerdict", () => {
   });
 });
 
+describe("applyMonitorEvent", () => {
+  it("appends a monitor-source event", () => {
+    const result = applyMonitorEvent([], { type: "event", source: "monitor", data: makeEvent("e1") });
+    expect(result).toHaveLength(1);
+  });
+
+  it("ignores a sample-source event", () => {
+    const result = applyMonitorEvent([], { type: "event", source: "sample", data: makeEvent("e1") });
+    expect(result).toHaveLength(0);
+  });
+
+  it("ignores non-event messages", () => {
+    const result = applyMonitorEvent([makeEvent("e1")], { type: "isolated" });
+    expect(result).toHaveLength(1);
+  });
+});
+
 describe("nextBackoffMs", () => {
   it("doubles the current delay", () => {
     expect(nextBackoffMs(1000)).toBe(2000);
@@ -181,5 +285,68 @@ describe("nextBackoffMs", () => {
   it("caps at 30 seconds", () => {
     expect(nextBackoffMs(20000)).toBe(30000);
     expect(nextBackoffMs(30000)).toBe(30000);
+  });
+});
+
+describe("isValidSha256", () => {
+  it("accepts a valid 64-character lowercase hex hash", () => {
+    expect(isValidSha256("a".repeat(64))).toBe(true);
+  });
+
+  it("rejects the wrong length", () => {
+    expect(isValidSha256("a".repeat(63))).toBe(false);
+  });
+
+  it("rejects uppercase characters", () => {
+    expect(isValidSha256("A".repeat(64))).toBe(false);
+  });
+
+  it("rejects non-hex characters", () => {
+    expect(isValidSha256("g".repeat(64))).toBe(false);
+  });
+});
+
+describe("sha256Hex", () => {
+  it("hashes a known file to its known SHA-256", async () => {
+    const file = new File(["hello"], "hello.txt");
+    const hash = await sha256Hex(file);
+    expect(hash).toBe("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+  });
+});
+
+describe("corpus", () => {
+  it("fetchCorpusPending returns only pending entries", async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { content_hash: "a", status: "pending" },
+        { content_hash: "b", status: "approved" },
+      ],
+    });
+    const result = await fetchCorpusPending();
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/api/corpus"), expect.anything());
+    expect(result.map((e) => e.content_hash)).toEqual(["a"]);
+  });
+
+  it("submitCorpusSample posts the file base64-encoded with its label", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await submitCorpusSample(new File([new Uint8Array([0, 255, 104, 105])], "s.sh"), "lbl");
+    const [, init] = (fetch as any).mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ content_b64: "AP9oaQ==", label: "lbl" });
+  });
+
+  it("approve and reject post to the content-hash-specific endpoints", async () => {
+    (fetch as any).mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await approveCorpusEntry("abc123");
+    await rejectCorpusEntry("abc123");
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/corpus/abc123/approve"),
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/corpus/abc123/reject"),
+      expect.objectContaining({ method: "POST" })
+    );
   });
 });

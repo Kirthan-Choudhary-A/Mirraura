@@ -1,68 +1,311 @@
 # Mirraura
 
-A shadow honeypot: it detonates uploaded files inside a throwaway,
-network-isolated Docker container and scores their behavior for verdicts
-like `Suspicious` or `Compromised`.
+A **shadow honeypot**. Instead of letting an untrusted file run on the real
+device, Mirraura detonates it inside a throwaway, network-isolated Docker
+container, watches what it actually does, and returns a verdict —
+`Normal`, `Suspicious`, `Compromised` or `Inconclusive` — with a confidence
+number and the exact list of behaviors that produced it.
+
+It runs three independent detection paths into the same verdict engine:
+
+1. **Upload-triggered** — you upload a file, it detonates in a fresh
+   container that is destroyed afterwards.
+2. **Continuous monitoring** — a persistent container stands in for "the
+   real device" and is polled every 10 seconds. A `Compromised` verdict
+   disconnects it from its network for real; only a human can reconnect it.
+3. **Automatic interception** — a background daemon on the host watches
+   your home directory and removable media; a new file is quarantined and
+   detonated automatically, with no upload step at all. See
+   [Automatic interception](#automatic-interception) below.
+
+Every verdict is appended to a hash-chained audit log, so an edited entry
+breaks the chain and is detectable.
+
+## Architecture
+
+| Component | Language | Responsibility |
+| --- | --- | --- |
+| `backend/` | Go | Container/network lifecycle per run, REST API, WebSocket feed, auth and sessions, the 10s monitoring ticker |
+| `verdict-engine/` | Python (FastAPI) | Known-bad hash lookup, weighted behavioral scoring, the audit log |
+| `sensor/` | Rust | Runs inside the shadow container, traces the sample with `strace`, emits canonical events |
+| `monitored-endpoint/` | Python | Poll-and-diff agent in the always-on container (processes, connections, `/etc`) |
+| `frontend/` | React + TypeScript | Dashboard: login, upload, live feed, verdict, audit log, hash approvals, quarantine review, user management |
+| `postgres` | PostgreSQL 16 | Users, sessions, the audit log, known-bad hashes, and quarantined-file records; each service connects with its own least-privilege role |
+| `interceptor/` | Go | Host-side daemon (not containerized): watches for new files, quarantines and submits them for automatic detonation |
+
+nginx serves the dashboard and reverse-proxies `/api` to the backend, so
+everything is one origin and only the frontend port is published.
 
 ## Prerequisites
 
-- Docker (with Docker Compose)
+- Docker, with Docker Compose (Docker Desktop on Windows/macOS)
+- About 4 GB of free disk space for the images
 
-## Running it
+## Quick start
 
-```
+```bash
+git clone https://github.com/Kirthan-Choudhary-A/Mirraura.git
+cd Mirraura
 cp .env.example .env
+# set MIRRAURA_ADMIN_PASSWORD in .env — 12+ characters, no default
 ./setup.sh
 ```
 
-Before running `./setup.sh`, set `MIRRAURA_ADMIN_USER` and
-`MIRRAURA_ADMIN_PASSWORD` in `.env` (12+ characters, no default — the
-script refuses to start otherwise).
+`setup.sh` validates the admin password, builds the shadow image, and brings
+up the stack. The first build takes several minutes because the Go, Rust and
+frontend code all compile.
 
-Once the stack is up, the dashboard is at http://localhost:5173. Sign in
-with the admin credentials from `.env`. There's no public sign-up; add more
-accounts via an optional `MIRRAURA_USERS_PATH` JSON file (see
-`.env.example`) if you need more than one user.
+Open <http://localhost:5173> and sign in with the credentials from `.env`.
 
-## Desktop download overlay
+<details>
+<summary>Windows (PowerShell)</summary>
 
-Mirraura ships a host-side desktop overlay (`overlay/`) that turns every
-real download into a full-screen visual: a translucent glass layer over the
-whole screen showing a pixel-art scene — your device linking to the shadow
-node, honeypots spawning, the downloaded file detonating inside them — that
-ends with the honeypots destroyed and the file returning (clean verdict) or
-the file locked in a shadow locker (malicious verdict).
+Clone with line-ending conversion off, or the shell scripts break inside the
+Linux containers (`bad interpreter`, `\r: command not found`):
 
-It runs on the host, not in Docker:
-
-```bash
-# with the Docker stack already running, in a graphical Linux session:
-./overlay/run-overlay.sh
-
-# preview the animation without a backend:
-./overlay/run-overlay.sh --demo safe
-./overlay/run-overlay.sh --demo lock
+```powershell
+git clone -c core.autocrlf=false https://github.com/Kirthan-Choudhary-A/Mirraura.git
+cd Mirraura
+copy .env.example .env
+# set MIRRAURA_ADMIN_PASSWORD in .env
+docker build -f shadow-image/Dockerfile -t mirraura-shadow:latest .
+docker compose up --build
 ```
 
-The daemon logs in with `MIRRAURA_ADMIN_USER`/`MIRRAURA_ADMIN_PASSWORD`,
-reaches the backend through the dashboard origin (`MIRRAURA_DASHBOARD_URL`,
-default `http://localhost:5173`), polls `MIRRAURA_DOWNLOADS_DIR`
-(default `~/Downloads`) for files whose size has settled, uploads each one
-for shadow detonation, and drives the animation from the same `/api/live`
-WebSocket feed the dashboard uses. `.part`/`.crdownload` download stubs are
-ignored. Press ESC to dismiss a running scene.
+Those last two commands are what `setup.sh` runs, so Git Bash is optional.
+</details>
 
-Translucency needs a compositing window manager (default on modern
-desktops). On Wayland, run with `QT_QPA_PLATFORM=xcb` if the window does
-not composite or draw above other windows.
+Stop with `Ctrl+C`, then `docker compose down`. Add `-v` to also wipe the
+audit log and known-bad hashes.
 
-## Demo samples
+## Accounts
 
-See `samples/` for files to upload through the dashboard. If you want to try
-the EICAR test file specifically, read `samples/EICAR.md` first — Windows
-Defender quarantines it on sight, so it needs to be regenerated manually.
+There is no public sign-up — this is a security tool. The admin account
+comes from `.env`:
 
-## How it works
+| Variable | Meaning |
+| --- | --- |
+| `MIRRAURA_ADMIN_USER` | Admin username (default `admin`) |
+| `MIRRAURA_ADMIN_PASSWORD` | Required, 12+ characters, no default |
+| `MIRRAURA_USERS_PATH` | Optional path to extra users, e.g. `/app/users.json` |
 
-- `docs/concepts.md` — architecture and concepts overview
-- `docs/superpowers/specs/2026-09-07-mirraura-design.md` — full design spec
+Two roles:
+
+- **admin** — everything, including approving/rejecting known-bad hashes and
+  reconnecting an isolated endpoint.
+- **analyst** — read-only plus uploads; approval and reconnect return 403.
+
+The admin from `.env`, plus any entries in an optional `users.json`, are
+seeded only on first boot, when the `users` table is empty. After that,
+manage accounts from the dashboard's user management page (admins only);
+re-seeding never runs again, so a removed account stays removed across
+restarts.
+
+To pre-seed extra accounts on first boot, generate a bcrypt hash and add it
+to `users.json` in the repo root (bind-mounted to `/app/users.json`), then
+set `MIRRAURA_USERS_PATH=/app/users.json`:
+
+```bash
+go run ./backend/cmd/hashpw 'their-password'
+```
+
+```json
+[{ "username": "asha", "bcrypt_hash": "$2a$10$...", "role": "analyst" }]
+```
+
+Sessions are a random token in an `HttpOnly` cookie, stored in Postgres,
+and expire after 8 hours of inactivity — they survive a backend restart.
+Removing a user or changing their role signs them out immediately.
+Failed logins are rate-limited per IP.
+
+## Demo walkthrough
+
+Upload the files in `samples/` through the dashboard. Each one is built to
+trip a specific rule:
+
+| Sample | What it does | Rule it triggers |
+| --- | --- | --- |
+| `harmless.sh` | Prints text, writes to `/tmp` | None — the baseline `Normal` case |
+| `spawn_and_write.sh` | Runs `touch`/`cat`, writes under `/etc` | `child_process` + `sensitive_write` |
+| `connect_odd_port.sh` | Opens a TCP connection to port 31337 | `odd_port` |
+| `samples/eicar.txt` | The EICAR antivirus test string | Known-bad hash — short-circuits to `Compromised` |
+
+The EICAR file is deliberately not committed; antivirus deletes it on sight.
+Read `samples/EICAR.md` to recreate it before that demo.
+
+Continuous monitoring needs no upload. To make the monitored endpoint look
+compromised, give it something worth reporting:
+
+```bash
+docker exec mirraura-monitored-endpoint sh -c 'for i in $(seq 1 8); do touch /etc/evil-$i; done'
+```
+
+Within one poll cycle the dashboard should show the events, a verdict, and —
+if the score clears 0.6 — the isolation banner with a **Reconnect** button.
+
+## How scoring works
+
+`verdict-engine/rule_scorer.py` adds a fixed weight per rule that fires:
+
+| Rule | Weight | Fires when |
+| --- | --- | --- |
+| `child_process` | 0.30 | A process is spawned (the sample's own shell is excluded) |
+| `sensitive_write` | 0.25 | A write under `/etc/`, `/bin/`, `/usr/`, `/boot/` or `/sbin/` |
+| `odd_port` | 0.20 | A connection to any port other than 80 or 443 |
+| `rapid_file_changes` | 0.25 | More than 5 file writes or deletes |
+
+The total is capped at 1.0 and mapped to a label: no telemetry →
+`Inconclusive`; 0.0 → `Normal`; below 0.6 → `Suspicious`; 0.6 and above →
+`Compromised`. Each rule that fires adds a plain-English line to the causal
+chain, which is what the dashboard shows instead of a bare yes/no.
+
+A known-bad SHA-256 match short-circuits all of this to `Compromised` at
+confidence 1.0, but only for hashes a human has **approved** — auto-proposed
+hashes sit as `pending` and affect nothing until then.
+
+## Automatic interception
+
+`interceptor/` is a separate Go binary that runs directly on the host (Linux
+only), not inside Docker — it needs to see the host's real filesystem and
+mount events, which a container would only get through privileged
+bind-mounts. It watches your home directory and any removable media
+mounted under `/media`/`/mnt`; a new file is quarantined, detonated through
+the same pipeline as a manual upload, and then:
+
+- **Normal** → released back to where it was headed, automatically.
+- **Suspicious** / **Inconclusive** → held in quarantine and added to the
+  dashboard's **Quarantine** tab for an admin to approve or reject.
+- **Compromised** → stays quarantined permanently; a desktop notification
+  fires either way.
+
+Build and install:
+
+```bash
+cd interceptor
+GOOS=linux GOARCH=amd64 go build -o mirraura-interceptor .
+sudo cp mirraura-interceptor /usr/local/bin/
+sudo cp mirraura-interceptor.service /etc/systemd/system/
+# Edit the service file: set User=<your username> and a real INTERCEPTOR_TOKEN
+# (must match INTERCEPTOR_TOKEN in .env).
+sudo systemctl daemon-reload
+sudo systemctl enable --now mirraura-interceptor
+```
+
+It talks to the backend over the same origin the frontend uses
+(`BACKEND_URL`, e.g. `http://localhost:5173`), authenticated by
+`INTERCEPTOR_TOKEN` rather than a login session, since there's no human at
+the keyboard for it to log in as.
+
+## API
+
+All routes require the session cookie except `/api/health` and
+`/api/login`. Admin-only routes are marked.
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Liveness |
+| `POST` | `/api/login` / `/api/logout` | Sign in, sign out |
+| `GET` | `/api/me` | Current username and role |
+| `POST` | `/api/samples` | Upload and detonate a file, returns the verdict |
+| `GET` | `/api/verdicts`, `/api/verdicts/{id}` | Audit log entries |
+| `GET` | `/api/audit/verify` | Hash-chain integrity check |
+| `GET` | `/api/live` | WebSocket: events, verdicts, isolation state |
+| `GET` | `/api/monitor/status` | Whether the endpoint is isolated |
+| `POST` | `/api/monitor/reconnect` | Reconnect an isolated endpoint (admin) |
+| `GET`/`POST` | `/api/hashes` | List or propose known-bad hashes |
+| `POST` | `/api/hashes/{hash}/approve\|reject` | Decide a pending hash (admin) |
+| `GET`/`POST` | `/api/corpus` | List or propose known-bad samples for similarity matching |
+| `POST` | `/api/corpus/{content_hash}/approve\|reject` | Decide a pending corpus sample (admin) |
+| `GET`/`POST` | `/api/users` | List or create users (admin) |
+| `DELETE` | `/api/users/{username}` | Remove a user (admin) |
+| `PATCH` | `/api/users/{username}/role` | Change a user's role (admin) |
+| `POST` | `/api/intercept` | Submit a quarantined file for detonation (interceptor daemon, token auth, not session auth) |
+| `GET` | `/api/intercept/pending` | List quarantined files awaiting review (admin) |
+| `POST` | `/api/intercept/{id}/approve\|reject` | Decide a held quarantined file (admin) |
+| `GET` | `/api/intercept/{id}/status` | Poll a held file's decision (interceptor daemon, token auth) |
+
+## Development
+
+```bash
+cd backend        && go test ./...
+cd verdict-engine && pytest
+cd sensor         && cargo test
+cd frontend       && npm install && npm test && npm run lint && npm run build
+cd monitored-endpoint && pytest
+```
+
+`npm run dev` gives a Vite dev server; it needs the stack up for `/api` to
+resolve.
+
+### Replaying a candidate scorer
+
+`revalidate.py` replays the hand-authored fixtures in
+`verdict-engine/revalidation_fixtures/` plus archived real captures against
+a candidate scorer, and reports accuracy on the fixtures and verdict drift
+on the captures:
+
+```bash
+docker compose exec verdict-engine python revalidate.py --candidate revalidation_candidates/my_scorer.py
+```
+
+Candidates must live in `revalidation_candidates/` because that directory is
+bind-mounted into the container. The candidate's module-level code runs with
+your privileges, so only point it at a file you wrote. Nothing is promoted
+automatically; a human folds a good change into `rule_scorer.py`.
+
+`train.py` fits a scikit-learn logistic regression over the same four
+features on synthetic data and ships as `trained_scorer.py` — a candidate
+for the loop above, never the live scorer.
+
+## Known limitations
+
+Deliberate, and worth knowing before you read too much into a verdict:
+
+- **Linux samples only.** The shadow image is Linux, so Windows
+  executables, Office macros and PDFs cannot be detonated.
+- **Four rules, four syscalls.** The sensor traces `execve`, `open`,
+  `openat` and `connect`, so deletions, renames and UDP (including DNS) are
+  invisible, and anything outside the four rules scores as `Normal`.
+- **Evadable by design at this scale.** A sample that sleeps past the 15s
+  trace window, or fingerprints the container first, comes back clean.
+- **Known-bad matching is hash-exact plus YARA + text-similarity triage**,
+  not true fuzzy hashing (ssdeep/TLSH) or a threat-intel lookup — far less
+  coverage than a commercial AV's signature corpus.
+- **Monitoring is a 10s snapshot diff.** Anything that starts and exits
+  between polls is missed, and the poller excludes its own toolchain by
+  name.
+- **The trained classifier is trained on synthetic data** labeled from an
+  invented weighting. It shows the pipeline works, not real-world accuracy.
+- **The backend mounts the Docker socket.** Compromising the backend means
+  compromising the host — this is a research tool, not something to expose
+  to a network.
+- Users, sessions, the audit log and known-bad hashes live in Postgres; the
+  raw event archive used for revalidation is still a JSONL file. Neither has
+  rotation or retention, so both grow without bound.
+- **The interceptor only watches `$HOME` and removable media**, and
+  excludes dotdirs (`.cache`, `.config`, etc.) as app-internal noise — a
+  file dropped anywhere else on the filesystem is invisible to it.
+- **gVisor is wired but not enabled.** `SHADOW_RUNTIME=runsc` is supported
+  end-to-end (`backend/dockermanager.go`), but on this project's own test
+  VM `runsc` hit a kernel/network-namespace incompatibility under nested
+  virtualization (`cannot run with network enabled in root network
+  namespace`) that wasn't worth chasing further. `runc` (the default)
+  remains the active isolation boundary, backed by the zero-egress shadow
+  networks (`Internal: true`) that were already in place regardless.
+- **Interception uses `inotify`/`fsnotify`, not `fanotify`.** A file exists
+  at its real path for a short window (moved into quarantine within
+  milliseconds of settling, not before it's ever written) rather than being
+  kernel-blocked from opening at all. `fanotify` with
+  `FAN_OPEN_PERM`/`FAN_EXEC_PERM` is the production-grade version of this —
+  closing that window by having the kernel itself pause the calling
+  process — and is the documented next step, not the current mechanism.
+- **The sensor still traces via `strace`/`ptrace`**, which real malware can
+  fingerprint (`PTRACE_TRACEME`, timing checks) and adds real per-syscall
+  overhead. An eBPF-based sensor (kernel tracepoints, no ptrace, no
+  per-syscall context switch) is a known, deliberately deferred upgrade.
+
+## Docs
+
+- `docs/concepts.md` — every concept and technology used, and why
+- `docs/superpowers/specs/` — design specs per feature
+- `docs/superpowers/plans/` — the build plans those specs were implemented from

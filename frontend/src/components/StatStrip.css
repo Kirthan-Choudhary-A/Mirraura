@@ -1,0 +1,39 @@
+.stat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.stat-strip__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-strip__label {
+  font-size: var(--fs-1);
+  color: var(--text-muted);
+}
+
+.stat-strip__value {
+  font-size: var(--fs-6);
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-strip__value[data-tone="compromised"] {
+  color: var(--sev-compromised);
+}
+
+.stat-strip__value[data-tone="suspicious"] {
+  color: var(--sev-suspicious);
+}
+
+@media (max-width: 640px) {
+  .stat-strip {
+    gap: var(--sp-4);
+  }
+}

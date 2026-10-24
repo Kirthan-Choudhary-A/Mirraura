@@ -1,0 +1,16 @@
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.wordmark__mark {
+  flex-shrink: 0;
+}
+
+.wordmark__text {
+  font-size: var(--fs-5);
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--text);
+}

@@ -5,10 +5,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
+import base64
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import static_triage
+
 from audit_log import AuditLog
+from corpus_lookup import (
+    SampleExistsError,
+    SampleNotFoundError,
+    SampleNotPendingError,
+    approve_sample,
+    list_samples,
+    propose_sample,
+    reject_sample,
+)
+from db import new_pool
 from event_archive import EventArchive
 from hash_lookup import (
     HashExistsError,
@@ -25,7 +39,13 @@ from rule_scorer import score_events, verdict_from_score
 from schemas import Event, Verdict
 
 app = FastAPI()
-audit_log = AuditLog(Path(os.getenv("AUDIT_LOG_PATH", "/data/audit_log.jsonl")))
+
+_verdict_db_url = os.getenv("VERDICT_DATABASE_URL")
+if not _verdict_db_url:
+    raise RuntimeError("VERDICT_DATABASE_URL must be set")
+_pool = new_pool(_verdict_db_url)
+
+audit_log = AuditLog(_pool)
 event_archive = EventArchive(Path(os.getenv("EVENT_ARCHIVE_PATH", "/data/event_archive.jsonl")))
 logger = logging.getLogger(__name__)
 
@@ -40,6 +60,18 @@ class ScoreRequest(BaseModel):
     # auto-propose); "monitor" = continuous-monitoring event batch (the hash is of
     # a JSON event array, would never match a future upload).
     source: str = "sample"
+    # Populated by the caller from a prior /triage call. Non-empty short-
+    # circuits straight to Compromised, same as a known-bad hash match --
+    # set when the caller already ran static triage instead of detonating.
+    static_matches: List[str] = []
+
+
+class TriageRequest(BaseModel):
+    sample_content_b64: str
+
+
+class TriageResponse(BaseModel):
+    matches: List[str]
 
 
 class ActionRequest(BaseModel):
@@ -57,6 +89,11 @@ class HashDecisionRequest(BaseModel):
     actor: str = ""
 
 
+class CorpusSubmitRequest(BaseModel):
+    content_b64: str
+    label: str
+
+
 def _strip_entry_hash(record: dict) -> dict:
     return {k: v for k, v in record.items() if k != "entry_hash"}
 
@@ -66,28 +103,41 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/triage", response_model=TriageResponse)
+def triage(req: TriageRequest):
+    data = base64.b64decode(req.sample_content_b64)
+    return TriageResponse(matches=static_triage.run(data, _pool))
+
+
 @app.post("/score", response_model=Verdict)
 def score(req: ScoreRequest):
     verdict_id = str(uuid.uuid4())
-    known_bad_label = check_hash(req.sample_hash)
+    known_bad_label = check_hash(_pool, req.sample_hash)
     if known_bad_label:
+        detection_method = "known_bad_hash"
         verdict, confidence, chain = (
             "Compromised",
             1.0,
             [f"sample hash matches known-bad entry '{known_bad_label}'"],
         )
+    elif req.static_matches:
+        detection_method = "static_triage"
+        verdict, confidence, chain = ("Compromised", 1.0, list(req.static_matches))
     elif req.timed_out:
+        detection_method = "dynamic"
         verdict, confidence, chain = (
             "Inconclusive",
             0.0,
             ["sample detonation aborted: sensor exceeded its execution timeout"],
         )
     else:
+        detection_method = "dynamic"
         confidence, chain = score_events(req.events)
         verdict = verdict_from_score(confidence, chain, had_telemetry=len(req.events) > 0)
         if verdict == "Compromised" and req.source == "sample":
             try:
                 propose_hash(
+                    _pool,
                     req.sample_hash,
                     f"auto-proposed from verdict {verdict_id}",
                     source="auto",
@@ -107,6 +157,8 @@ def score(req: ScoreRequest):
         "verdict": verdict,
         "confidence": confidence,
         "causal_chain": chain,
+        "detection_method": detection_method,
+        "source": req.source,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     stored = audit_log.append(record)
@@ -147,6 +199,11 @@ def get_verdict(verdict_id: str):
     return _strip_entry_hash(record)
 
 
+@app.get("/verify")
+def verify_chain_route():
+    return audit_log.verify_chain_detail()
+
+
 @app.post("/audit/action")
 def log_action(req: ActionRequest):
     record = {
@@ -161,7 +218,7 @@ def log_action(req: ActionRequest):
 
 @app.get("/hashes")
 def list_hashes_route():
-    return list_hashes()
+    return list_hashes(_pool)
 
 
 @app.post("/hashes")
@@ -169,7 +226,7 @@ def submit_hash_route(req: HashSubmitRequest):
     if not is_valid_hash(req.hash):
         raise HTTPException(status_code=400, detail="hash must be 64 lowercase hex characters")
     try:
-        return propose_hash(req.hash, req.label, source="manual")
+        return propose_hash(_pool, req.hash, req.label, source="manual")
     except HashExistsError:
         raise HTTPException(status_code=409, detail="hash already exists")
 
@@ -177,7 +234,7 @@ def submit_hash_route(req: HashSubmitRequest):
 @app.post("/hashes/{hash}/approve")
 def approve_hash_route(hash: str, req: HashDecisionRequest):
     try:
-        entry = approve_hash(hash)
+        entry = approve_hash(_pool, hash)
     except HashNotFoundError:
         raise HTTPException(status_code=404, detail="hash not found")
     except HashNotPendingError:
@@ -198,7 +255,7 @@ def approve_hash_route(hash: str, req: HashDecisionRequest):
 @app.post("/hashes/{hash}/reject")
 def reject_hash_route(hash: str, req: HashDecisionRequest):
     try:
-        entry = reject_hash(hash)
+        entry = reject_hash(_pool, hash)
     except HashNotFoundError:
         raise HTTPException(status_code=404, detail="hash not found")
     except HashNotPendingError:
@@ -208,6 +265,67 @@ def reject_hash_route(hash: str, req: HashDecisionRequest):
             "record_id": str(uuid.uuid4()),
             "action": "hash_rejected",
             "hash": entry["hash"],
+            "label": entry["label"],
+            "actor": req.actor,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    return entry
+
+
+@app.get("/corpus")
+def list_corpus_route():
+    return list_samples(_pool)
+
+
+@app.post("/corpus")
+def submit_corpus_route(req: CorpusSubmitRequest):
+    try:
+        content = base64.b64decode(req.content_b64, validate=True)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="content_b64 must be valid base64")
+    try:
+        return propose_sample(_pool, content, req.label, source="manual")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except SampleExistsError:
+        raise HTTPException(status_code=409, detail="sample already exists")
+
+
+@app.post("/corpus/{content_hash}/approve")
+def approve_corpus_route(content_hash: str, req: HashDecisionRequest):
+    try:
+        entry = approve_sample(_pool, content_hash)
+    except SampleNotFoundError:
+        raise HTTPException(status_code=404, detail="sample not found")
+    except SampleNotPendingError:
+        raise HTTPException(status_code=409, detail="sample is not pending")
+    audit_log.append(
+        {
+            "record_id": str(uuid.uuid4()),
+            "action": "corpus_sample_approved",
+            "hash": entry["content_hash"],
+            "label": entry["label"],
+            "actor": req.actor,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    return entry
+
+
+@app.post("/corpus/{content_hash}/reject")
+def reject_corpus_route(content_hash: str, req: HashDecisionRequest):
+    try:
+        entry = reject_sample(_pool, content_hash)
+    except SampleNotFoundError:
+        raise HTTPException(status_code=404, detail="sample not found")
+    except SampleNotPendingError:
+        raise HTTPException(status_code=409, detail="sample is not pending")
+    audit_log.append(
+        {
+            "record_id": str(uuid.uuid4()),
+            "action": "corpus_sample_rejected",
+            "hash": entry["content_hash"],
             "label": entry["label"],
             "actor": req.actor,
             "timestamp": datetime.now(timezone.utc).isoformat(),

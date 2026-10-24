@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"net"
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -54,7 +56,7 @@ func requireAuth(store *SessionStore) func(http.Handler) http.Handler {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			sess, ok := store.Get(cookie.Value)
+			sess, ok := store.Get(r.Context(), cookie.Value)
 			if !ok {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
@@ -78,12 +80,34 @@ func requireRole(role string) func(http.Handler) http.Handler {
 	}
 }
 
+// requireToken gates a route by a shared-secret bearer token instead of a
+// user session -- for the interceptor daemon, which runs headless on the
+// host with no logged-in human behind it. A compile-time-impossible empty
+// token always rejects, so a deployment that forgot to set
+// INTERCEPTOR_TOKEN fails closed rather than accepting any request.
+func requireToken(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if token == "" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimiter) http.HandlerFunc {
+func loginHandler(store *SessionStore, pool *pgxpool.Pool, limiter *LoginLimiter) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -102,7 +126,8 @@ func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimi
 			return
 		}
 
-		user, ok := users[req.Username]
+		user, err := GetUser(r.Context(), pool, req.Username)
+		ok := err == nil
 		hash := dummyPasswordHash
 		if ok {
 			hash = []byte(user.PasswordHash)
@@ -114,7 +139,11 @@ func loginHandler(store *SessionStore, users map[string]User, limiter *LoginLimi
 			return
 		}
 
-		token := store.Create(user.Username, user.Role)
+		token, err := store.Create(r.Context(), user.Username, user.Role)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
 			Value:    token,
@@ -135,7 +164,7 @@ func logoutHandler(store *SessionStore) http.HandlerFunc {
 			return
 		}
 		if cookie, err := r.Cookie(sessionCookieName); err == nil {
-			store.Delete(cookie.Value)
+			store.Delete(r.Context(), cookie.Value)
 		}
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,

@@ -1,24 +1,53 @@
 import { useEffect, useState } from "react";
-import { applyLiveEvent, connectLive, fetchMonitorStatus, logout, me, shouldUpdateSampleVerdict } from "./api";
-import type { ConnectionState } from "./api";
+import {
+  applyLiveEvent,
+  applyMonitorEvent,
+  connectLive,
+  fetchMonitorStatus,
+  logout,
+  me,
+  shouldUpdateSampleVerdict,
+} from "./api";
+import type { ChainStatus, ConnectionState, CorpusEntry, HashEntry, QuarantineEntry } from "./api";
 import { AuditLogTable } from "./components/AuditLogTable";
+import { DetectionsOverview } from "./components/DetectionsOverview";
 import { EventFeed } from "./components/EventFeed";
+import { Header } from "./components/Header";
 import { LoginPage } from "./components/LoginPage";
 import { MonitorBanner } from "./components/MonitorBanner";
+import { CorpusReview } from "./components/CorpusReview";
 import { PendingHashApprovals } from "./components/PendingHashApprovals";
+import { QuarantineReview } from "./components/QuarantineReview";
+import { Skeleton } from "./components/Skeleton";
+import { StatStrip } from "./components/StatStrip";
+import { TabPanel, Tabs } from "./components/Tabs";
 import { UploadPanel } from "./components/UploadPanel";
+import { UserManagement } from "./components/UserManagement";
 import { VerdictPanel } from "./components/VerdictPanel";
 import type { MirraEvent, Verdict } from "./types";
 
 function App() {
   const [user, setUser] = useState<{ username: string; role: string } | null | undefined>(undefined);
   const [sessionExpired, setSessionExpired] = useState(false);
-  const [events, setEvents] = useState<MirraEvent[]>([]);
+  const [sampleEvents, setSampleEvents] = useState<MirraEvent[]>([]);
+  const [monitorEvents, setMonitorEvents] = useState<MirraEvent[]>([]);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isolated, setIsolated] = useState(false);
   const [connState, setConnState] = useState<ConnectionState>("connecting");
   const [monitorError, setMonitorError] = useState<string | null>(null);
+  const [bottomTab, setBottomTab] = useState<"audit" | "hashes" | "corpus" | "quarantine" | "users">("audit");
+  const [liveAnnouncement, setLiveAnnouncement] = useState("");
+
+  // StatStrip's source data — owned by AuditLogTable/PendingHashApprovals
+  // (they already fetch it for their own tables) and lifted here via
+  // callbacks so the chain-status/verdicts/hashes endpoints are each hit
+  // from exactly one place.
+  const [verdicts, setVerdicts] = useState<Verdict[] | null>(null);
+  const [hashes, setHashes] = useState<HashEntry[] | null>(null);
+  const [quarantine, setQuarantine] = useState<QuarantineEntry[] | null>(null);
+  const [corpus, setCorpus] = useState<CorpusEntry[] | null>(null);
+  const [chainStatus, setChainStatus] = useState<ChainStatus | null>(null);
 
   useEffect(() => {
     me()
@@ -35,13 +64,21 @@ function App() {
       })
       .catch((e) => setMonitorError(e instanceof Error ? e.message : "failed to load monitor status"));
     const conn = connectLive((msg) => {
-      setEvents((prev) => applyLiveEvent(prev, msg));
+      setSampleEvents((prev) => applyLiveEvent(prev, msg));
+      setMonitorEvents((prev) => applyMonitorEvent(prev, msg));
       if (shouldUpdateSampleVerdict(msg)) {
         setVerdict(msg.data);
+        setLiveAnnouncement(`New verdict: ${msg.data.verdict} for ${msg.data.sample_filename}`);
       }
       if (msg.type === "verdict") setRefreshKey((k) => k + 1);
-      if (msg.type === "isolated") setIsolated(true);
-      if (msg.type === "reconnected") setIsolated(false);
+      if (msg.type === "isolated") {
+        setIsolated(true);
+        setLiveAnnouncement("Monitored endpoint isolated after a compromised verdict.");
+      }
+      if (msg.type === "reconnected") {
+        setIsolated(false);
+        setLiveAnnouncement("Monitored endpoint reconnected.");
+      }
     }, setConnState);
     return () => conn.close();
   }, [user]);
@@ -53,6 +90,11 @@ function App() {
 
   async function handleLogout() {
     await logout().catch(() => {});
+    setUser(null);
+  }
+
+  function handleSessionExpired() {
+    setSessionExpired(true);
     setUser(null);
   }
 
@@ -74,51 +116,109 @@ function App() {
     );
   }
 
+  const role: "admin" | "analyst" = user.role === "admin" ? "admin" : "analyst";
+  const pendingCount = hashes?.filter((h) => h.status === "pending").length ?? 0;
+  const quarantineCount = quarantine?.length ?? 0;
+  const corpusCount = corpus?.length ?? 0;
+
   return (
     <div className="app">
-      <header className="app-header">
-        <h1 className="app-header__title">Mirraura</h1>
-        <p className="app-header__subtitle">
-          Shadow honeypot — live behavioral verdict engine
-        </p>
-        <p className="app-header__conn-state" data-state={connState}>
-          {connState === "live" ? "● Live" : connState === "connecting" ? "○ Connecting…" : "○ Offline — retrying"}
-        </p>
-        <p className="app-header__user">
-          {user.username} · {user.role}{" "}
-          <button className="app-header__logout" onClick={handleLogout}>
-            Sign out
-          </button>
-        </p>
-      </header>
+      <span className="sr-only" aria-live="polite">
+        {liveAnnouncement}
+      </span>
+
+      <Header user={user} connState={connState} monitorIsolated={isolated} onLogout={handleLogout} />
 
       {monitorError && <p className="error-text">{monitorError}</p>}
+
+      {verdicts && hashes ? (
+        <>
+          <StatStrip verdicts={verdicts} hashes={hashes} chainIntact={chainStatus?.intact ?? null} />
+          <DetectionsOverview verdicts={verdicts} />
+        </>
+      ) : (
+        <Skeleton rows={1} />
+      )}
+
+      <MonitorBanner isolated={isolated} role={role} onReconnected={() => setIsolated(false)} />
 
       <section className="detonation-zone">
         <div className="detonation-zone__left">
           <UploadPanel
             onVerdict={handleUpload}
-            onUploadStart={() => setEvents([])}
-            onSessionExpired={() => {
-              setSessionExpired(true);
-              setUser(null);
-            }}
+            onUploadStart={() => setSampleEvents([])}
+            onSessionExpired={handleSessionExpired}
           />
           <VerdictPanel verdict={verdict} />
         </div>
         <div className="detonation-zone__right">
-          <EventFeed events={events} />
+          <EventFeed sampleEvents={sampleEvents} monitorEvents={monitorEvents} />
         </div>
       </section>
 
-      <MonitorBanner isolated={isolated} onReconnected={() => setIsolated(false)} />
-
-      <section className="admin-zone">
-        <PendingHashApprovals
-          refreshKey={refreshKey}
-          onDecision={() => setRefreshKey((k) => k + 1)}
+      <section className="log-zone">
+        <Tabs
+          tabs={[
+            { id: "audit", label: "Audit log" },
+            {
+              id: "hashes",
+              label: "Hash approvals",
+              badge: pendingCount > 0 ? <span className="tabs__badge">{pendingCount}</span> : undefined,
+            },
+            {
+              id: "corpus",
+              label: "Corpus",
+              badge: corpusCount > 0 ? <span className="tabs__badge">{corpusCount}</span> : undefined,
+            },
+            {
+              id: "quarantine",
+              label: "Quarantine",
+              badge: quarantineCount > 0 ? <span className="tabs__badge">{quarantineCount}</span> : undefined,
+            },
+            ...(role === "admin" ? [{ id: "users", label: "Users" }] : []),
+          ]}
+          active={bottomTab}
+          onChange={(id) => setBottomTab(id as "audit" | "hashes" | "corpus" | "quarantine" | "users")}
         />
-        <AuditLogTable refreshKey={refreshKey} />
+        <TabPanel id="audit" active={bottomTab}>
+          <AuditLogTable
+            refreshKey={refreshKey}
+            role={role}
+            onSessionExpired={handleSessionExpired}
+            onVerdictsChange={setVerdicts}
+            onChainStatusChange={setChainStatus}
+          />
+        </TabPanel>
+        <TabPanel id="hashes" active={bottomTab}>
+          <PendingHashApprovals
+            refreshKey={refreshKey}
+            role={role}
+            onDecision={() => setRefreshKey((k) => k + 1)}
+            onSessionExpired={handleSessionExpired}
+            onHashesChange={setHashes}
+          />
+        </TabPanel>
+        <TabPanel id="corpus" active={bottomTab}>
+          <CorpusReview
+            refreshKey={refreshKey}
+            role={role}
+            onDecision={() => setRefreshKey((k) => k + 1)}
+            onSessionExpired={handleSessionExpired}
+            onCorpusChange={setCorpus}
+          />
+        </TabPanel>
+        <TabPanel id="quarantine" active={bottomTab}>
+          <QuarantineReview
+            refreshKey={refreshKey}
+            role={role}
+            onDecision={() => setRefreshKey((k) => k + 1)}
+            onSessionExpired={handleSessionExpired}
+            onQuarantineChange={setQuarantine}
+          />
+        </TabPanel>
+        <TabPanel id="users" active={bottomTab}>
+          <UserManagement onSessionExpired={handleSessionExpired} />
+        </TabPanel>
       </section>
     </div>
   );

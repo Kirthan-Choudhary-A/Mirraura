@@ -70,3 +70,22 @@ func TestHubAllowsSameOriginUpgrade(t *testing.T) {
 	}
 	conn.Close()
 }
+
+// A Chromium window launched with --app=<url> sends a literal "null"
+// Origin header on its WebSocket handshake instead of the page's real
+// origin (confirmed live: every /api/live request from such a window was
+// rejected 403, silently, until this was fixed) -- regression test for
+// that specific real-world case rather than a hypothetical one.
+func TestHubAllowsNullOriginUpgrade(t *testing.T) {
+	hub := NewHub()
+	server := httptest.NewServer(newTestMux(hub))
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[len("http"):] + "/api/live"
+	headers := http.Header{"Origin": []string{"null"}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, headers)
+	if err != nil {
+		t.Fatalf("expected null-origin dial to succeed, got: %v", err)
+	}
+	conn.Close()
+}
