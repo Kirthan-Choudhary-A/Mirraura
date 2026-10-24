@@ -1,0 +1,6 @@
+# Mirraura desktop overlay (runs on the host, not in Docker).
+# On Debian/Ubuntu you can instead `sudo apt install python3-pyqt5` and
+# drop the PyQt5 line here.
+PyQt5>=5.15,<6
+requests>=2.31
+websocket-client>=1.7
